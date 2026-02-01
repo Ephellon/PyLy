@@ -270,20 +270,30 @@ def run_pipeline(
          _log(f"BASE: replaced={getattr(stats, 'replaced', 0)} kept={getattr(stats, 'kept', 0)} dropped={getattr(stats, 'dropped', 0)}")
          _log(f"BASE: merged_spans={getattr(stats, 'merged_spans', 0)} max_span={getattr(stats, 'max_span', 1)} garbage_removed={getattr(stats, 'garbage_removed', 0)}")
 
-         gdiff = getattr(stats, "global_diff", None)
+         gsim = getattr(stats, "global_similarity", None)
          rescue_rep = getattr(stats, "rescue_replaced", None)
+         rescue_triggered = getattr(stats, "rescue_triggered", None)
+         rescue_applied = getattr(stats, "rescue_applied", None)
+         rescue_skip_reason = getattr(stats, "rescue_skip_reason", None)
 
-         if gdiff is not None:
-            _log(f"BASE: global_diff={float(gdiff):0.3f} diff_threshold={float(base_diff_threshold):0.2f} rescue={bool(base_rescue)}")
+         if gsim is not None:
+            _log(
+               "BASE: global_similarity="
+               f"{float(gsim):0.3f} base_diff_threshold={float(base_diff_threshold):0.2f} "
+               f"rescue_enabled={bool(base_rescue)} rescue_triggered={bool(rescue_triggered)} "
+               f"rescue_applied={bool(rescue_applied)}"
+            )
          if rescue_rep is not None:
             _log(f"BASE: rescue_replaced={int(rescue_rep)}")
+         if rescue_triggered and not rescue_applied and rescue_skip_reason:
+            _log(f"BASE: rescue_no_changes={rescue_skip_reason}")
 
          if lrc_header:
             headers.append("[re:PyLy]")
             headers.append("[by:PyLy]")
-            if gdiff is not None:
-               headers.append(f"[pyly_base_diff:{float(gdiff):0.3f}]")
-               if base_rescue and float(gdiff) >= float(base_diff_threshold):
+            if gsim is not None:
+               headers.append(f"[pyly_base_similarity:{float(gsim):0.3f}]")
+               if rescue_triggered:
                   headers.append("[pyly_base_mode:rescue]")
 
       elif base_lyrics_path and not base_lines and not base_found:

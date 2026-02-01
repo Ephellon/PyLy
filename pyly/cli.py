@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
 
    # Diff / rescue
    ap.add_argument("--base-diff-threshold", type=float, default=0.75,
-                   help="Enable rescue pass if global diff >= this. Default: 0.75")
+                   help="Enable rescue pass if global similarity >= this. Default: 0.75")
    ap.add_argument("--base-rescue", dest="base_rescue", action="store_true",
                    help="Enable diff-driven rescue pass (default when base is used).")
    ap.add_argument("--no-base-rescue", dest="base_rescue", action="store_false",
