@@ -6,12 +6,37 @@ import time
 
 
 _ANSI_CLEAR_EOL = "\x1b[0K"
+_ANSI_RESET = "\x1b[0m"
+_ANSI_GREEN = "\x1b[32m"
+_ANSI_YELLOW = "\x1b[33m"
+_ANSI_RED = "\x1b[31m"
+_ANSI_BLUE = "\x1b[34m"
+_COLOR_ENABLED: bool | None = None
 
 def _is_tty() -> bool:
    try:
       return sys.stdout.isatty()
    except Exception:
       return False
+
+
+def set_color_enabled(enabled: bool | None) -> None:
+   global _COLOR_ENABLED
+   _COLOR_ENABLED = enabled
+
+
+def _use_color() -> bool:
+   if not _is_tty():
+      return False
+   if _COLOR_ENABLED is None:
+      return True
+   return bool(_COLOR_ENABLED)
+
+
+def _colorize(msg: str, color: str) -> str:
+   if not _use_color():
+      return msg
+   return f"{color}{msg}{_ANSI_RESET}"
 
 
 def format_duration(seconds: float) -> str:
@@ -200,12 +225,16 @@ def step(msg: str) -> None:
 
 
 def ok(msg: str) -> str:
-   return f" ✓ {msg}"
+   return _colorize(f" ✓ {msg}", _ANSI_GREEN)
 
 
 def warn(msg: str) -> str:
-   return f" ! {msg}"
+   return _colorize(f" ! {msg}", _ANSI_YELLOW)
 
 
 def err(msg: str) -> str:
-   return f" X {msg}"
+   return _colorize(f" X {msg}", _ANSI_RED)
+
+
+def info(msg: str) -> str:
+   return _colorize(f" i {msg}", _ANSI_BLUE)
