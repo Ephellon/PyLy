@@ -3,13 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .whisper_offline import whisper_to_srt
-from .srt_io import read_srt, write_srt, SrtBlock
-from .reduce_text import reduce_srt_blocks
-from .lrc_writer import srt_blocks_to_lrc_lines, write_lrc
-from .base_lyrics import load_base_lyrics_lines, apply_base_lyrics
-
-from .console_ui import Spinner, step, ok
+from .srt_io import SrtBlock
 
 
 @dataclass(frozen=True)
@@ -70,17 +64,15 @@ def _resolve_base_lyrics(base_arg: Path | None, audio_path: Path) -> Path | None
    if not base_arg:
       return None
 
-   # Absolute path: no magic
-   if base_arg.is_absolute():
-      return base_arg
-
-   # Relative path: resolve per-track
+   base_arg = Path(base_arg)
    name = base_arg.name
-
    if "*" in name:
       name = name.replace("*", audio_path.stem)
 
-   return (audio_path.parent / name).resolve()
+   if base_arg.is_absolute():
+      return (base_arg.parent / name).resolve()
+
+   return (audio_path.parent / base_arg.parent / name).resolve()
 
 
 def run_pipeline(
@@ -143,23 +135,6 @@ def run_pipeline(
             f.write(msg.rstrip() + "\n")
       except Exception:
          pass
-
-   def _resolve_base_for_track(base_arg: Path | None) -> Path | None:
-      if not base_arg:
-         return None
-
-      base_arg = Path(base_arg)
-
-      # Absolute: use as-is
-      if base_arg.is_absolute():
-         return base_arg
-
-      # Relative resolves to the audio's folder
-      name = base_arg.name
-      if "*" in name:
-         name = name.replace("*", audio_path.stem)
-
-      return (audio_path.parent / name).resolve()
 
    def _read_lrc_text_lines(lrc_lines: list[str]) -> list[str]:
       # For matching: strip timestamps, keep text only
@@ -246,7 +221,7 @@ def run_pipeline(
       # ---- Optional base lyrics alignment ----
       headers: list[str] = []
 
-      resolved_base = _resolve_base_for_track(base_lyrics_path) if base_lyrics_path else None
+      resolved_base = _resolve_base_lyrics(base_lyrics_path, audio_path) if base_lyrics_path else None
       if resolved_base and resolved_base.is_file():
          base_lines = load_base_lyrics_lines(resolved_base)
 

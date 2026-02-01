@@ -11,8 +11,5 @@
 # # # # # # # # # # # # # # # # # #
 
 from .cli import main
-from .console_ui import LiveStatus, banner, ok, err, format_duration, RollingETA
-
-live = LiveStatus(enabled=True)
 
 raise SystemExit(main())

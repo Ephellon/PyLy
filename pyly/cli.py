@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 from .pipeline import run_pipeline
-from .console_ui import banner, step, ok, err, RollingETA, format_duration
+from .console_ui import LiveStatus, banner, ok, err, RollingETA, format_duration
 
 
 AUDIO_EXTS = {
@@ -13,7 +13,7 @@ AUDIO_EXTS = {
 
 
 def _is_audio_file(path: Path) -> bool:
-   return path.is_file() and path.suffix.lower() in _AUDIO_EXTS
+   return path.is_file() and path.suffix.lower() in AUDIO_EXTS
 
 
 def _collect_inputs(
@@ -123,9 +123,8 @@ def main(argv: list[str] | None = None) -> int:
       print("[X] --online is not implemented. Offline Whisper is the default.", file=sys.stderr)
       return 2
 
-   root = Path(ns.path)
    try:
-      inputs = _collect_inputs(root, ns.recursive)
+      inputs = _collect_inputs([ns.path], ns.recursive)
    except Exception as e:
       print(f"[X] {e}", file=sys.stderr)
       return 2
@@ -135,9 +134,11 @@ def main(argv: list[str] | None = None) -> int:
       return 1
 
    base_arg = Path(ns.base_lyrics) if ns.base_lyrics else None
-   if base_arg and base_arg.is_absolute() and not base_arg.is_file():
-      print(f"[X] Base lyrics file not found: {base_arg}", file=sys.stderr)
-      return 2
+   if base_arg and base_arg.is_absolute():
+      has_wildcard = "*" in base_arg.name or "?" in base_arg.name
+      if not has_wildcard and not base_arg.is_file():
+         print(f"[X] Base lyrics file not found: {base_arg}", file=sys.stderr)
+         return 2
 
    total = len(inputs)
    banner(f"PyLy — {total} file(s) queued")
@@ -147,11 +148,12 @@ def main(argv: list[str] | None = None) -> int:
    skipped_count = 0
 
    eta = RollingETA(total=total, window=5)
+   live = LiveStatus(enabled=True)
 
    for idx, audio in enumerate(inputs, start=1):
       completed = (ok_count + skipped_count + fail_count)
       eta_str = eta.eta_string(completed)
-      step(f"[{idx}/{total}] {audio.name}  (ETA ~ {eta_str})")
+      live.update(f"[{idx}/{total}] {audio.name}  (ETA ~ {eta_str})")
 
       t0 = time.time()
       try:
