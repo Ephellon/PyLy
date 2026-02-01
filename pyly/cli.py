@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 from .pipeline import run_pipeline
-from .console_ui import LiveStatus, banner, ok, err, RollingETA, format_duration
+from .console_ui import LiveStatus, banner, ok, err, RollingETA, format_duration, set_color_enabled
 
 
 AUDIO_EXTS = {
@@ -88,6 +88,12 @@ def main(argv: list[str] | None = None) -> int:
    ap.add_argument("--language", default=None, help="Language code (e.g., en). Optional.")
    ap.add_argument("--device", default=None, help="Device (cpu/cuda). Optional pass-through.")
    ap.add_argument("--online", action="store_true", help="Opt-in online mode (currently unimplemented)")
+   color_group = ap.add_mutually_exclusive_group()
+   color_group.add_argument("--color", dest="color", action="store_const", const=True,
+                            help="Force color output")
+   color_group.add_argument("--no-color", dest="color", action="store_const", const=False,
+                            help="Disable color output")
+   ap.set_defaults(color=None)
 
    # Base lyrics
    ap.add_argument("--base", dest="base_lyrics", default=None, help="Text-only lyrics file (no timing)")
@@ -118,6 +124,7 @@ def main(argv: list[str] | None = None) -> int:
    ap.set_defaults(lrc_header=True)
 
    ns = ap.parse_args(argv)
+   set_color_enabled(ns.color)
 
    if ns.online:
       print("[X] --online is not implemented. Offline Whisper is the default.", file=sys.stderr)
