@@ -98,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
    # Base lyrics
    ap.add_argument("--base", dest="base_lyrics", default=None, help="Text-only lyrics file (no timing)")
    ap.add_argument("--base-lyrics", dest="base_lyrics", default=None, help="Alias of --base")
+   ap.add_argument("--lyrics", dest="base_lyrics", default=None, help="Alias of --base")
    ap.add_argument("--base-strict", action="store_true",
                    help="Drop unmatched Whisper lines when base lyrics are provided")
    ap.add_argument("--base-threshold", type=float, default=0.82,
@@ -106,6 +107,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="Lookahead window in base lines while matching. Default: 12")
    ap.add_argument("--base-max-merge", type=int, default=5,
                    help="Max Whisper lines to merge into one base match. Default: 5")
+   ap.add_argument("--fetch", nargs="?", const="", default=None,
+                   help="Fetch base lyrics online (optional provider/template).")
 
    # Diff / rescue
    ap.add_argument("--base-diff-threshold", type=float, default=0.75,
@@ -157,6 +160,9 @@ def main(argv: list[str] | None = None) -> int:
    eta = RollingETA(total=total, window=5)
    live = LiveStatus(enabled=True)
 
+   from .lyrics_fetch import parse_fetch_arg
+   fetch_config = parse_fetch_arg(ns.fetch)
+
    for idx, audio in enumerate(inputs, start=1):
       completed = (ok_count + skipped_count + fail_count)
       eta_str = eta.eta_string(completed)
@@ -184,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
             base_rescue=ns.base_rescue,
 
             lrc_header=ns.lrc_header,
+            fetch_config=fetch_config,
          )
          dt = time.time() - t0
 

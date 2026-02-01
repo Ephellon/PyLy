@@ -98,6 +98,7 @@ def run_pipeline(
 
    # output niceties
    lrc_header: bool = True,
+   fetch_config=None,
 ) -> dict[str, str]:
    """
    Process a single audio file:
@@ -116,6 +117,7 @@ def run_pipeline(
    from .srt_io import read_srt
    from .base_lyrics import load_base_lyrics_lines, apply_base_lyrics
    from .lrc_writer import srt_blocks_to_lrc_lines, write_lrc
+   from .lyrics_fetch import fetch_base_lyrics_lines
 
    audio_path = Path(audio_path)
 
@@ -222,9 +224,27 @@ def run_pipeline(
       headers: list[str] = []
 
       resolved_base = _resolve_base_lyrics(base_lyrics_path, audio_path) if base_lyrics_path else None
+      base_lines = None
+      base_source = None
+      base_found = False
+
       if resolved_base and resolved_base.is_file():
          base_lines = load_base_lyrics_lines(resolved_base)
+         base_source = f"file:{resolved_base}"
+         base_found = True
+      elif base_lyrics_path:
+         expected = str(resolved_base) if resolved_base else str(base_lyrics_path)
+         _log(f"BASE: missing (expected: {expected})")
+         if fetch_config and getattr(fetch_config, "enabled", False):
+            base_lines = fetch_base_lyrics_lines(fetch_config, audio_path, log_fn=_log)
+            if base_lines:
+               base_source = f"fetch:{getattr(fetch_config, 'provider', '')}"
+      elif fetch_config and getattr(fetch_config, "enabled", False):
+         base_lines = fetch_base_lyrics_lines(fetch_config, audio_path, log_fn=_log)
+         if base_lines:
+            base_source = f"fetch:{getattr(fetch_config, 'provider', '')}"
 
+      if base_lines:
          whisper_text_lines = _read_lrc_text_lines(lrc_lines)
 
          new_text_lines, stats = _call_apply_base_lyrics(
@@ -244,7 +264,8 @@ def run_pipeline(
          lrc_lines = _apply_text_back_into_lrc(lrc_lines, new_text_lines)
 
          # Logging + optional header tags
-         _log(f"BASE: {resolved_base}")
+         if base_source:
+            _log(f"BASE: {base_source}")
          _log(f"BASE: replaced={getattr(stats, 'replaced', 0)} kept={getattr(stats, 'kept', 0)} dropped={getattr(stats, 'dropped', 0)}")
          _log(f"BASE: merged_spans={getattr(stats, 'merged_spans', 0)} max_span={getattr(stats, 'max_span', 1)} garbage_removed={getattr(stats, 'garbage_removed', 0)}")
 
@@ -264,10 +285,8 @@ def run_pipeline(
                if base_rescue and float(gdiff) >= float(base_diff_threshold):
                   headers.append("[pyly_base_mode:rescue]")
 
-      elif base_lyrics_path:
-         # Base requested but not found for this track
-         expected = str(resolved_base) if resolved_base else str(base_lyrics_path)
-         _log(f"BASE: missing (expected: {expected})")
+      elif base_lyrics_path and not base_lines and not base_found:
+         _log("BASE: none (missing and fetch disabled or failed)")
 
       # ---- Write LRC ----
       write_lrc(out_lrc, lrc_lines, overwrite=overwrite, headers=headers if headers else None)
