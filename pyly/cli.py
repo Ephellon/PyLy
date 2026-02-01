@@ -1,0 +1,212 @@
+import argparse
+import sys
+import time
+from pathlib import Path
+
+from .pipeline import run_pipeline
+from .console_ui import banner, step, ok, err, RollingETA, format_duration
+
+
+AUDIO_EXTS = {
+   ".mp3", ".flac", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".alac", ".wma", ".aiff"
+}
+
+
+def _is_audio_file(path: Path) -> bool:
+   return path.is_file() and path.suffix.lower() in _AUDIO_EXTS
+
+
+def _collect_inputs(
+   inputs: list[str | Path],
+   recursive: bool = False,
+) -> list[Path]:
+   """
+   Resolve CLI inputs into a sorted list of audio files.
+
+   Rules:
+   - Files are accepted only if they are known audio types
+   - Directories yield audio files inside them
+   - --recursive controls deep traversal
+   - Duplicates are removed
+   - Output is deterministic
+   """
+
+   results: set[Path] = set()
+
+   for raw in inputs:
+      p = Path(raw).expanduser()
+
+      # Allow globbing explicitly (Windows cmd doesn't expand *)
+      if "*" in str(p) or "?" in str(p):
+         for gp in p.parent.glob(p.name):
+            if gp.is_dir():
+               if recursive:
+                  for f in gp.rglob("*"):
+                     if _is_audio_file(f):
+                        results.add(f.resolve())
+               else:
+                  for f in gp.iterdir():
+                     if _is_audio_file(f):
+                        results.add(f.resolve())
+            elif _is_audio_file(gp):
+               results.add(gp.resolve())
+         continue
+
+      if not p.exists():
+         raise FileNotFoundError(f"Input not found: {p}")
+
+      if p.is_file():
+         if _is_audio_file(p):
+            results.add(p.resolve())
+         else:
+            raise ValueError(f"Not an audio file: {p}")
+         continue
+
+      if p.is_dir():
+         if recursive:
+            for f in p.rglob("*"):
+               if _is_audio_file(f):
+                  results.add(f.resolve())
+         else:
+            for f in p.iterdir():
+               if _is_audio_file(f):
+                  results.add(f.resolve())
+         continue
+
+   return sorted(results)
+
+
+def main(argv: list[str] | None = None) -> int:
+   ap = argparse.ArgumentParser(prog="pyly", add_help=True)
+   ap.add_argument("path", help="Audio file or folder")
+   ap.add_argument("--recursive", action="store_true", help="Recurse when path is a folder")
+   ap.add_argument("--overwrite", action="store_true", help="Overwrite existing .lrc")
+   ap.add_argument("--clean", action="store_true", help="Delete intermediates after success")
+   ap.add_argument("--dry-run", action="store_true", help="Print actions without running")
+   ap.add_argument("--log", action="store_true", help="Write per-file .pyly.log")
+   ap.add_argument("--model", default="small", help="Whisper model (tiny/base/small/medium/large)")
+   ap.add_argument("--language", default=None, help="Language code (e.g., en). Optional.")
+   ap.add_argument("--device", default=None, help="Device (cpu/cuda). Optional pass-through.")
+   ap.add_argument("--online", action="store_true", help="Opt-in online mode (currently unimplemented)")
+
+   # Base lyrics
+   ap.add_argument("--base", dest="base_lyrics", default=None, help="Text-only lyrics file (no timing)")
+   ap.add_argument("--base-lyrics", dest="base_lyrics", default=None, help="Alias of --base")
+   ap.add_argument("--base-strict", action="store_true",
+                   help="Drop unmatched Whisper lines when base lyrics are provided")
+   ap.add_argument("--base-threshold", type=float, default=0.82,
+                   help="Similarity threshold (0..1) to replace with base. Default: 0.82")
+   ap.add_argument("--base-window", type=int, default=12,
+                   help="Lookahead window in base lines while matching. Default: 12")
+   ap.add_argument("--base-max-merge", type=int, default=5,
+                   help="Max Whisper lines to merge into one base match. Default: 5")
+
+   # Diff / rescue
+   ap.add_argument("--base-diff-threshold", type=float, default=0.75,
+                   help="Enable rescue pass if global diff >= this. Default: 0.75")
+   ap.add_argument("--base-rescue", dest="base_rescue", action="store_true",
+                   help="Enable diff-driven rescue pass (default when base is used).")
+   ap.add_argument("--no-base-rescue", dest="base_rescue", action="store_false",
+                   help="Disable diff-driven rescue pass.")
+   ap.set_defaults(base_rescue=True)
+
+   # LRC header tags
+   ap.add_argument("--lrc-header", dest="lrc_header", action="store_true",
+                   help="Write PyLy tags into the LRC header. Default: on.")
+   ap.add_argument("--no-lrc-header", dest="lrc_header", action="store_false",
+                   help="Do not write header tags.")
+   ap.set_defaults(lrc_header=True)
+
+   ns = ap.parse_args(argv)
+
+   if ns.online:
+      print("[X] --online is not implemented. Offline Whisper is the default.", file=sys.stderr)
+      return 2
+
+   root = Path(ns.path)
+   try:
+      inputs = _collect_inputs(root, ns.recursive)
+   except Exception as e:
+      print(f"[X] {e}", file=sys.stderr)
+      return 2
+
+   if not inputs:
+      print("[!] No supported audio files found.", file=sys.stderr)
+      return 1
+
+   base_arg = Path(ns.base_lyrics) if ns.base_lyrics else None
+   if base_arg and base_arg.is_absolute() and not base_arg.is_file():
+      print(f"[X] Base lyrics file not found: {base_arg}", file=sys.stderr)
+      return 2
+
+   total = len(inputs)
+   banner(f"PyLy — {total} file(s) queued")
+
+   ok_count = 0
+   fail_count = 0
+   skipped_count = 0
+
+   eta = RollingETA(total=total, window=5)
+
+   for idx, audio in enumerate(inputs, start=1):
+      completed = (ok_count + skipped_count + fail_count)
+      eta_str = eta.eta_string(completed)
+      step(f"[{idx}/{total}] {audio.name}  (ETA ~ {eta_str})")
+
+      t0 = time.time()
+      try:
+         result = run_pipeline(
+            audio_path=audio,
+            overwrite=ns.overwrite,
+            clean=ns.clean,
+            dry_run=ns.dry_run,
+            write_log=ns.log,
+            whisper_model=ns.model,
+            language=ns.language,
+            device=ns.device,
+
+            base_lyrics_path=base_arg,
+            base_strict=ns.base_strict,
+            base_threshold=ns.base_threshold,
+            base_window=ns.base_window,
+            base_max_merge=ns.base_max_merge,
+
+            base_diff_threshold=ns.base_diff_threshold,
+            base_rescue=ns.base_rescue,
+
+            lrc_header=ns.lrc_header,
+         )
+         dt = time.time() - t0
+
+         status = result.get("status", "ok")
+         if status == "skipped":
+            skipped_count += 1
+            eta.add(min(dt, 2.0))
+            live.commit(ok(f"Skipped ({result.get('reason', 'existing output')})  [{format_duration(dt)}]"))
+         elif status == "dry_run":
+            ok_count += 1
+            eta.add(min(dt, 2.0))
+            live.commit(ok(f"Dry run  [{format_duration(dt)}]"))
+         else:
+            ok_count += 1
+            eta.add(dt)
+            out_name = Path(result.get("lrc", "")).name
+            live.commit(ok(f"OK ({out_name})  [{format_duration(dt)}]"))
+
+      except Exception as e:
+         dt = time.time() - t0
+         fail_count += 1
+         eta.add(dt)
+         live.commit(err(f"{e}  [{format_duration(dt)}]"))
+
+      completed = (ok_count + skipped_count + fail_count)
+      overall_eta = eta.eta_string(completed)
+      live.update(f"Progress: {completed}/{total}  |  Overall ETA ~ {overall_eta}")
+
+   live.clear()
+   banner(f"Done. OK={ok_count} SKIPPED={skipped_count} FAIL={fail_count}")
+   return 0 if fail_count == 0 else 1
+
+
+if __name__ == "__main__":
+   raise SystemExit(main())

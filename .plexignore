@@ -1,0 +1,5 @@
+# Add these exceptions to your .plexignore file(s)
+
+*.srt
+*.red.srt
+*.pyly.log

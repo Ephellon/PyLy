@@ -1,0 +1,14 @@
+# Have Git(Hub) ignore these folders and files...
+
+ff/
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.env
+dist/
+build/
+*.egg-info/
+.pytest_cache/
