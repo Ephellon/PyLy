@@ -68,21 +68,17 @@ def _clean_line(line: str) -> str:
    return s
 
 
-def reduce_srt_blocks(blocks: list[SrtBlock]) -> list[SrtBlock]:
+def reduce_srt_blocks(blocks: list["SrtBlock"]) -> list["SrtBlock"]:
+   from .srt_io import SrtBlock
+
    out: list[SrtBlock] = []
    for b in blocks:
       new_lines: list[str] = []
       for ln in b.lines:
-         if _BRACKET_NOISE.match(ln):
-            continue
-         if _NOTE_ONLY.match(ln):
-            continue
-
          cleaned = _clean_line(ln)
          if cleaned:
             new_lines.append(cleaned)
 
-      # Drop empty blocks entirely
       if new_lines:
          out.append(SrtBlock(start_ms=b.start_ms, end_ms=b.end_ms, lines=new_lines))
    return out

@@ -199,13 +199,13 @@ def step(msg: str) -> None:
    print(f" - {msg}")
 
 
-def ok(msg: str) -> None:
-   print(f" ✓ {msg}")
+def ok(msg: str) -> str:
+   return f" ✓ {msg}"
 
 
-def warn(msg: str) -> None:
-   print(f" ! {msg}")
+def warn(msg: str) -> str:
+   return f" ! {msg}"
 
 
-def err(msg: str) -> None:
-   print(f" X {msg}")
+def err(msg: str) -> str:
+   return f" X {msg}"
