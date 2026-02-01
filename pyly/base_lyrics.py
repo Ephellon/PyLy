@@ -32,8 +32,11 @@ class BaseMatchStats:
    base_lines_used: int = 0
    whisper_lines_consumed_for_base: int = 0
 
-   global_diff: float = 0.0
+   global_similarity: float = 0.0
    rescue_replaced: int = 0
+   rescue_triggered: bool = False
+   rescue_applied: bool = False
+   rescue_skip_reason: str | None = None
 
    def avg_whisper_per_base(self) -> float:
       if self.base_lines_used <= 0:
@@ -110,7 +113,7 @@ def _sim(a: str, b: str) -> float:
    return SequenceMatcher(None, a, b).ratio()
 
 
-def _global_diff_score(whisper_lines: list[str], base_lines: list[str]) -> float:
+def _global_similarity_score(whisper_lines: list[str], base_lines: list[str]) -> float:
    w = " ".join(_norm(x) for x in whisper_lines if _norm(x))
    b = " ".join(_norm(x) for x in base_lines if _norm(x))
    if not w or not b:
@@ -169,7 +172,7 @@ def apply_base_lyrics(
    w_norm = [_norm(x) for x in whisper_lines]
    b_norm = [_norm(x) for x in base_lines]
 
-   stats.global_diff = _global_diff_score(whisper_lines, base_lines)
+   stats.global_similarity = _global_similarity_score(whisper_lines, base_lines)
 
    i = 0
    b = 0
@@ -268,20 +271,20 @@ def apply_base_lyrics(
       i += 1
 
    # -------- PASS 2: RESCUE --------
-   if not enable_rescue:
-      return patched, stats
-
-   if stats.global_diff < float(diff_threshold):
+   stats.rescue_triggered = bool(enable_rescue) and stats.global_similarity >= float(diff_threshold)
+   if not stats.rescue_triggered:
       return patched, stats
 
    remaining_base = [idx for idx, used in enumerate(used_base) if (not used) and b_norm[idx]]
    if not remaining_base:
+      stats.rescue_skip_reason = "no remaining base lines to rescue"
       return patched, stats
 
    rescue_threshold = max(0.40, float(threshold) - float(rescue_threshold_delta))
 
    rb = 0
    j = 0
+   rescue_garbage_removed = 0
 
    while j < len(patched) and rb < len(remaining_base):
       line = patched[j]
@@ -320,6 +323,7 @@ def apply_base_lyrics(
             patched[j] = ""
             stats.dropped += 1
             stats.garbage_removed += 1
+            rescue_garbage_removed += 1
 
       j += 1
 
@@ -329,5 +333,10 @@ def apply_base_lyrics(
          patched[k] = ""
          stats.dropped += 1
          stats.garbage_removed += 1
+         rescue_garbage_removed += 1
+
+   stats.rescue_applied = stats.rescue_replaced > 0 or rescue_garbage_removed > 0
+   if stats.rescue_triggered and not stats.rescue_applied and not stats.rescue_skip_reason:
+      stats.rescue_skip_reason = "rescue made no replacements or garbage removals"
 
    return patched, stats

@@ -10,7 +10,7 @@ _ANSI_RESET = "\x1b[0m"
 _ANSI_GREEN = "\x1b[32m"
 _ANSI_YELLOW = "\x1b[33m"
 _ANSI_RED = "\x1b[31m"
-_ANSI_BLUE = "\x1b[34m"
+_ANSI_CYAN = "\x1b[96m"
 _COLOR_ENABLED: bool | None = None
 
 def _is_tty() -> bool:
@@ -237,4 +237,4 @@ def err(msg: str) -> str:
 
 
 def info(msg: str) -> str:
-   return _colorize(f" i {msg}", _ANSI_BLUE)
+   return _colorize(f" i {msg}", _ANSI_CYAN)

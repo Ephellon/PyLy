@@ -136,9 +136,7 @@ def whisper_to_srt(
    env = dict(env)
    env.setdefault("TQDM_DISABLE", "1")
 
-   # Run whisper; keep the console alive but keep logs readable.
-   # - stdout: generally quiet; still capture for errors/debug
-   # - stderr: where tqdm + warnings usually go; we capture and filter into log
+   # Run whisper with output captured so tqdm/progress doesn't reach the console.
    proc = subprocess.Popen(
       cmd,
       stdout=subprocess.PIPE,
@@ -150,30 +148,21 @@ def whisper_to_srt(
       cwd=str(output_dir),
    )
 
-   # Stream stderr so user sees activity; log filtered lines
-   assert proc.stderr is not None
-   assert proc.stdout is not None
+   stdout_text, stderr_text = proc.communicate()
+   rc = proc.returncode
 
-   # stdout is usually empty; read after
-   for raw in proc.stderr:
-      # show on console (so user sees it's alive)
-      try:
-         sys.stderr.write(raw)
-      except Exception:
-         pass
+   if log_path:
+      if stderr_text and stderr_text.strip():
+         _log_append(log_path, "WHISPER_STDERR:")
+         for ln in stderr_text.splitlines():
+            if not _is_progress_spam(ln):
+               _log_append(log_path, ln)
 
-      if not _is_progress_spam(raw):
-         _log_append(log_path, raw.rstrip("\n"))
-
-   stdout_text = proc.stdout.read() or ""
-   rc = proc.wait()
-
-   if stdout_text.strip():
-      # Rare, but keep it for debugging
-      _log_append(log_path, "WHISPER_STDOUT:")
-      for ln in stdout_text.splitlines():
-         if not _is_progress_spam(ln):
-            _log_append(log_path, ln)
+      if stdout_text and stdout_text.strip():
+         _log_append(log_path, "WHISPER_STDOUT:")
+         for ln in stdout_text.splitlines():
+            if not _is_progress_spam(ln):
+               _log_append(log_path, ln)
 
    if rc != 0:
       raise RuntimeError(f"Whisper exited with code {rc} (see log: {log_path})")
