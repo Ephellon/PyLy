@@ -109,6 +109,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="Max Whisper lines to merge into one base match. Default: 5")
    ap.add_argument("--fetch", nargs="?", const="", default=None,
                    help="Fetch base lyrics online (optional provider/template).")
+   ap.add_argument(
+      "--layout",
+      default=None,
+      help="Optional folder layout hint (lidarr/plex/flat). Used only if tags are missing.",
+   )
 
    # Diff / rescue
    ap.add_argument("--base-diff-threshold", type=float, default=0.75,
@@ -191,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
 
             lrc_header=ns.lrc_header,
             fetch_config=fetch_config,
+            layout=ns.layout,
          )
          dt = time.time() - t0
 

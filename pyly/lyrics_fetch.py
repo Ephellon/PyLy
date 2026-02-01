@@ -9,14 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .console_ui import info, warn
+from .template_tokens import expand_template
 
 
 DEFAULT_PROVIDER = "lrclib"
 DEFAULT_TEMPLATE = "{Artist Name} {Track Title}"
 KNOWN_PROVIDERS = {DEFAULT_PROVIDER}
-_SPACE_RX = re.compile(r"\s+")
-_YEAR_RX = re.compile(r"\b(19|20)\d{2}\b")
-_TRACK_NUM_RX = re.compile(r"^\s*\d+\s*[-._ ]+\s*")
 _LRC_TS_RX = re.compile(r"^\s*\[?\d{1,2}:\d{2}(?:\.\d+)?\]?\s*")
 
 
@@ -48,20 +46,19 @@ def parse_fetch_arg(value: str | None) -> FetchConfig | None:
    return FetchConfig(True, provider=DEFAULT_PROVIDER, template=raw)
 
 
-def expand_query(template: str, audio_path: Path) -> str:
-   tokens = _extract_tokens(audio_path)
-   result = template
-   for token, value in tokens.items():
-      result = result.replace(token, value)
-   result = re.sub(r"\{[^}]+\}", "", result)
-   result = _SPACE_RX.sub(" ", result).strip()
-   return result
+def expand_query(template: str, audio_path: Path, layout: str | None = None) -> str:
+   return expand_template(template, audio_path, layout=layout)
 
 
-def fetch_base_lyrics_lines(config: FetchConfig, audio_path: Path, log_fn=None) -> list[str] | None:
+def fetch_base_lyrics_lines(
+   config: FetchConfig,
+   audio_path: Path,
+   log_fn=None,
+   layout: str | None = None,
+) -> list[str] | None:
    provider = (config.provider or DEFAULT_PROVIDER).lower()
    template = config.template or DEFAULT_TEMPLATE
-   query = expand_query(template, audio_path)
+   query = expand_query(template, audio_path, layout=layout)
 
    if not query:
       _log_info(f"FETCH: skipped (empty query)", log_fn=log_fn)
@@ -146,36 +143,6 @@ def _text_to_lines(text: str | None) -> list[str]:
       if s:
          lines.append(s)
    return lines
-
-
-def _extract_tokens(audio_path: Path) -> dict[str, str]:
-   artist = audio_path.parent.name.strip() if audio_path.parent else ""
-   title = _clean_title(audio_path.stem)
-   year = _guess_year(audio_path)
-   return {
-      "{Artist Name}": artist or "",
-      "{Track Title}": title or "",
-      "{Release Year}": year or "",
-   }
-
-
-def _clean_title(stem: str) -> str:
-   s = stem.replace("_", " ").strip()
-   s = _TRACK_NUM_RX.sub("", s)
-   s = _SPACE_RX.sub(" ", s).strip()
-   return s
-
-
-def _guess_year(audio_path: Path) -> str:
-   for candidate in (audio_path.parent.name, audio_path.name, audio_path.stem):
-      match = _YEAR_RX.search(candidate or "")
-      if match:
-         return match.group(0)
-   if audio_path.parent.parent:
-      match = _YEAR_RX.search(audio_path.parent.parent.name or "")
-      if match:
-         return match.group(0)
-   return ""
 
 
 def _cache_path(provider: str, query: str) -> Path:

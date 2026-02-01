@@ -99,6 +99,7 @@ def run_pipeline(
    # output niceties
    lrc_header: bool = True,
    fetch_config=None,
+   layout: str | None = None,
 ) -> dict[str, str]:
    """
    Process a single audio file:
@@ -236,11 +237,11 @@ def run_pipeline(
          expected = str(resolved_base) if resolved_base else str(base_lyrics_path)
          _log(f"BASE: missing (expected: {expected})")
          if fetch_config and getattr(fetch_config, "enabled", False):
-            base_lines = fetch_base_lyrics_lines(fetch_config, audio_path, log_fn=_log)
+            base_lines = fetch_base_lyrics_lines(fetch_config, audio_path, log_fn=_log, layout=layout)
             if base_lines:
                base_source = f"fetch:{getattr(fetch_config, 'provider', '')}"
       elif fetch_config and getattr(fetch_config, "enabled", False):
-         base_lines = fetch_base_lyrics_lines(fetch_config, audio_path, log_fn=_log)
+         base_lines = fetch_base_lyrics_lines(fetch_config, audio_path, log_fn=_log, layout=layout)
          if base_lines:
             base_source = f"fetch:{getattr(fetch_config, 'provider', '')}"
 
