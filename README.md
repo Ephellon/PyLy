@@ -14,7 +14,10 @@ PyLy is an **offline-default, Python-first** tool that generates PlexAmp-compati
 * [Install](#install)
 * [Usage](#usage)
 * [Outputs](#outputs)
+* [Audio formats](#audio-formats)
 * [Base lyrics assistance](#base-lyrics-assistance)
+* [Online base lyric fetching](#online-base-lyric-fetching)
+* [Fetch templates and layout hints](#fetch-templates-and-layout-hints)
 * [ffmpeg handling](#ffmpeg-handling)
 * [Online mode](#online-mode)
 * [All flags](#all-flags)
@@ -91,6 +94,12 @@ For `Track.flac`:
 * `Track.lrc` — Final PlexAmp-compatible lyrics
 * `Track.pyly.log` — Optional per-file log (if `--log`)
 
+## Audio formats
+
+PyLy accepts common lossless and lossy audio formats:
+
+* `.mp3`, `.flac`, `.wav`, `.m4a`, `.aac`, `.ogg`, `.opus`, `.alac`, `.wma`, `.aiff`
+
 ## Base lyrics assistance
 
 PyLy can optionally use a **text-only lyrics file** (no timestamps) as a reference to improve output quality when Whisper is inaccurate or incoherent.
@@ -103,6 +112,7 @@ This does **not** rewrite lyrics or alter meaning. The base lyrics are used only
 
   * Provide a plain UTF-8 text file containing lyrics in order (no timestamps).
   * Lines are matched monotonically against Whisper output.
+  * Supports wildcards in filename (e.g., `--base "*.txt"` resolves per-audio file).
 
 * `--base-strict`
 
@@ -117,12 +127,65 @@ This does **not** rewrite lyrics or alter meaning. The base lyrics are used only
 
   * Lookahead window (in base lyric lines) when attempting to match Whisper output.
 
+* `--base-max-merge <N>` (default: `5`)
+
+  * Maximum number of Whisper lines that can merge into a single base lyric match.
+
+* `--base-diff-threshold <0..1>` (default: `0.75`)
+
+  * Global similarity required to enable the rescue pass.
+
+* `--base-rescue` / `--no-base-rescue`
+
+  * Toggle the diff-driven rescue pass (enabled by default when base lyrics are used).
+
+* `--lrc-header` / `--no-lrc-header`
+
+  * Control whether PyLy writes `[re:]`, `[by:]`, and base-match stats into the LRC header.
+
 ### Behavior
 
 * Whisper timings are always preserved.
 * Base lyrics are never modified or rewritten.
 * Unmatched lines fall back to Whisper output unless `--base-strict` is used.
 * If base lyrics do not align well, PyLy safely degrades to Whisper-only behavior.
+* A rescue pass can optionally drop low-confidence filler and fill missed base lines when global similarity is high enough.
+
+---
+
+## Online base lyric fetching
+
+PyLy can fetch **plain text lyrics** as a base reference when a local base file is not provided (or is missing).
+
+* `--fetch` enables fetching (default provider: `lrclib`).
+* Results are cached in `.pyly_cache/` to avoid repeated requests.
+* Fetched lyrics are treated the same as local base lyrics (timings still come from Whisper).
+
+Examples:
+
+```bash
+pyly "X:\Music\Artist\Album\01 - Track.flac" --fetch
+pyly "X:\Music\Artist\Album\01 - Track.flac" --fetch lrclib
+pyly "X:\Music\Artist\Album\01 - Track.flac" --fetch "Radiohead Nude"
+```
+
+## Fetch templates and layout hints
+
+Fetch queries can be template-driven to use metadata or path structure:
+
+```bash
+pyly "X:\Music\Artist\Album\01 - Track.flac" --fetch "lrclib:{Artist Name} {Track Title}"
+```
+
+Available tokens are derived from tags (via `ffprobe`) or inferred from the path. Common tokens include:
+
+* `{Artist Name}`, `{Album Title}`, `{Track Title}`
+* `{Track Number}`, `{Disc Number}`, `{Year}`
+
+If tags are missing, you can provide a folder layout hint:
+
+* `--layout lidarr` or `--layout plex` (artist/album/track folder structures)
+* `--layout flat` (all files in one folder)
 
 ---
 
@@ -162,6 +225,15 @@ If neither a system nor bundled `ffmpeg` is available, PyLy fails loudly with a 
 | `--online`                   | Opt-in online mode. **Currently unimplemented and will fail loudly.**                           |
 | `--base <lyrics.txt>`        | Use a text-only lyrics file (no timestamps) as a reference for matching and substitution.       |
 | `--base-lyrics <lyrics.txt>` | *Alias for `--base`.*                                                                           |
+| `--lyrics <lyrics.txt>`      | *Alias for `--base`.*                                                                           |
 | `--base-strict`              | Drop unmatched Whisper lines when base lyrics are provided.                                     |
 | `--base-threshold <0..1>`    | Similarity threshold required to replace Whisper text with base lyrics. Default: `0.82`.        |
 | `--base-window <N>`          | Lookahead window (in base lyric lines) used during matching. Default: `12`.                     |
+| `--base-max-merge <N>`       | Max Whisper lines to merge into one base match. Default: `5`.                                   |
+| `--base-diff-threshold <0..1>` | Global similarity required to enable rescue pass. Default: `0.75`.                             |
+| `--base-rescue`              | Enable diff-driven rescue pass (default when base lyrics are used).                             |
+| `--no-base-rescue`           | Disable diff-driven rescue pass.                                                                |
+| `--lrc-header`               | Write PyLy header tags (`[re:]`, `[by:]`, stats) into the LRC. Default: on.                      |
+| `--no-lrc-header`            | Do not write header tags into the LRC.                                                          |
+| `--fetch [provider/template]` | Fetch base lyrics online (default provider: `lrclib`).                                         |
+| `--layout <hint>`            | Folder layout hint (`lidarr`, `plex`, `flat`) for fetch templates when tags are missing.        |
