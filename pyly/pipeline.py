@@ -95,6 +95,7 @@ def run_pipeline(
    # diff/rescue (optional; only used if base_lyrics supports it)
    base_diff_threshold: float = 0.75,
    base_rescue: bool = True,
+   truth_mode: bool = False,
 
    # output niceties
    lrc_header: bool = True,
@@ -116,7 +117,7 @@ def run_pipeline(
    from .whisper_offline import transcribe_to_srt
    from .reduce_text import reduce_srt_file
    from .srt_io import read_srt
-   from .base_lyrics import load_base_lyrics_lines, apply_base_lyrics
+   from .base_lyrics import load_base_lyrics_lines, apply_base_lyrics, apply_truth_patching
    from .lrc_writer import srt_blocks_to_lrc_lines, write_lrc
    from .lyrics_fetch import fetch_base_lyrics_lines
 
@@ -263,6 +264,12 @@ def run_pipeline(
          )
 
          lrc_lines = _apply_text_back_into_lrc(lrc_lines, new_text_lines)
+         line_to_base_idx = getattr(stats, "line_to_base_idx", None)
+         filtered_line_to_base_idx: list[int | None] | None = None
+         if line_to_base_idx and len(line_to_base_idx) == len(new_text_lines):
+            filtered_line_to_base_idx = [
+               idx for txt, idx in zip(new_text_lines, line_to_base_idx) if (txt or "").strip()
+            ]
 
          # Logging + optional header tags
          if base_source:
@@ -288,6 +295,29 @@ def run_pipeline(
          if rescue_triggered and not rescue_applied and rescue_skip_reason:
             _log(f"BASE: rescue_no_changes={rescue_skip_reason}")
 
+         truth_stats = None
+         if truth_mode:
+            truth_lines = base_lines
+            truth_out, truth_stats = apply_truth_patching(
+               lrc_lines=lrc_lines,
+               truth_lines=truth_lines,
+               line_to_truth_idx=filtered_line_to_base_idx,
+               global_similarity=float(gsim or 0.0),
+               diff_threshold=base_diff_threshold,
+            )
+            lrc_lines = truth_out
+
+            _log(
+               "TRUTH: enabled="
+               f"{bool(getattr(truth_stats, 'truth_enabled', False))} "
+               f"triggered={bool(getattr(truth_stats, 'truth_triggered', False))} "
+               f"patched_spans={int(getattr(truth_stats, 'truth_patched_spans', 0))} "
+               f"lines_written={int(getattr(truth_stats, 'truth_lines_written', 0))}"
+            )
+            truth_skip_reason = getattr(truth_stats, "truth_skip_reason", None)
+            if truth_skip_reason and not getattr(truth_stats, "truth_lines_written", 0):
+               _log(f"TRUTH: skipped={truth_skip_reason}")
+
          if lrc_header:
             headers.append("[re:PyLy]")
             headers.append("[by:PyLy]")
@@ -295,9 +325,15 @@ def run_pipeline(
                headers.append(f"[pyly_base_similarity:{float(gsim):0.3f}]")
                if rescue_triggered:
                   headers.append("[pyly_base_mode:rescue]")
+            if truth_stats and getattr(truth_stats, "truth_lines_written", 0) > 0:
+               headers.append("[pyly_base_mode:truth]")
 
       elif base_lyrics_path and not base_lines and not base_found:
          _log("BASE: none (missing and fetch disabled or failed)")
+
+      if truth_mode and not base_lines:
+         _log("TRUTH: warning=truth mode requested but no base lyrics available")
+         _log("TRUTH: enabled=True triggered=False patched_spans=0 lines_written=0")
 
       # ---- Write LRC ----
       write_lrc(out_lrc, lrc_lines, overwrite=overwrite, headers=headers if headers else None)

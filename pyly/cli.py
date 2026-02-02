@@ -79,14 +79,14 @@ def _collect_inputs(
 def main(argv: list[str] | None = None) -> int:
    ap = argparse.ArgumentParser(prog="pyly", add_help=True)
    ap.add_argument("path", help="Audio file or folder")
-   ap.add_argument("--recursive", action="store_true", help="Recurse when path is a folder")
-   ap.add_argument("--overwrite", action="store_true", help="Overwrite existing .lrc")
-   ap.add_argument("--clean", action="store_true", help="Delete intermediates after success")
-   ap.add_argument("--dry-run", action="store_true", help="Print actions without running")
-   ap.add_argument("--log", action="store_true", help="Write per-file .pyly.log")
-   ap.add_argument("--model", default="small", help="Whisper model (tiny/base/small/medium/large)")
-   ap.add_argument("--language", default=None, help="Language code (e.g., en). Optional.")
-   ap.add_argument("--device", default=None, help="Device (cpu/cuda). Optional pass-through.")
+   ap.add_argument("--recursive", "-r", action="store_true", help="Recurse when path is a folder")
+   ap.add_argument("--overwrite", "-o", action="store_true", help="Overwrite existing .lrc")
+   ap.add_argument("--clean", "-c", action="store_true", help="Delete intermediates after success")
+   ap.add_argument("--dry-run", "-q", action="store_true", help="Print actions without running")
+   ap.add_argument("--log", "-v", action="store_true", help="Write per-file .pyly.log")
+   ap.add_argument("--model", "-m", default="small", help="Whisper model (tiny/base/small/medium/large)")
+   ap.add_argument("--language", "-l", default=None, help="Language code (e.g., en). Optional.")
+   ap.add_argument("--device", "-d", default=None, help="Device (cpu/cuda). Optional pass-through.")
    ap.add_argument("--online", action="store_true", help="Opt-in online mode (currently unimplemented)")
    color_group = ap.add_mutually_exclusive_group()
    color_group.add_argument("--color", dest="color", action="store_const", const=True,
@@ -96,21 +96,24 @@ def main(argv: list[str] | None = None) -> int:
    ap.set_defaults(color=None)
 
    # Base lyrics
-   ap.add_argument("--base", dest="base_lyrics", default=None, help="Text-only lyrics file (no timing)")
+   ap.add_argument("--base", "-b", dest="base_lyrics", default=None, help="Text-only lyrics file (no timing)")
    ap.add_argument("--base-lyrics", dest="base_lyrics", default=None, help="Alias of --base")
    ap.add_argument("--lyrics", dest="base_lyrics", default=None, help="Alias of --base")
-   ap.add_argument("--base-strict", action="store_true",
+   ap.add_argument("--truth", "--base-truth", "-u", dest="truth_mode", action="store_true",
+                   help="Treat base lyrics as ground truth for patching (guarded by similarity).")
+   ap.add_argument("--base-strict", "-s", action="store_true",
                    help="Drop unmatched Whisper lines when base lyrics are provided")
-   ap.add_argument("--base-threshold", type=float, default=0.82,
+   ap.add_argument("--base-threshold", "-t", type=float, default=0.82,
                    help="Similarity threshold (0..1) to replace with base. Default: 0.82")
-   ap.add_argument("--base-window", type=int, default=12,
+   ap.add_argument("--base-window", "-w", type=int, default=12,
                    help="Lookahead window in base lines while matching. Default: 12")
-   ap.add_argument("--base-max-merge", type=int, default=5,
+   ap.add_argument("--base-max-merge", "-x", type=int, default=5,
                    help="Max Whisper lines to merge into one base match. Default: 5")
-   ap.add_argument("--fetch", nargs="?", const="", default=None,
+   ap.add_argument("--fetch", "-f", nargs="?", const="", default=None,
                    help="Fetch base lyrics online (optional provider/template).")
    ap.add_argument(
       "--layout",
+      "-y",
       default=None,
       help=(
          "Optional layout hint: lidarr/plex/flat preset or a custom template string. "
@@ -119,18 +122,18 @@ def main(argv: list[str] | None = None) -> int:
    )
 
    # Diff / rescue
-   ap.add_argument("--base-diff-threshold", type=float, default=0.75,
+   ap.add_argument("--base-diff-threshold", "-i", type=float, default=0.75,
                    help="Enable rescue pass if global similarity >= this. Default: 0.75")
-   ap.add_argument("--base-rescue", dest="base_rescue", action="store_true",
+   ap.add_argument("--base-rescue", "-e", dest="base_rescue", action="store_true",
                    help="Enable diff-driven rescue pass (default when base is used).")
-   ap.add_argument("--no-base-rescue", dest="base_rescue", action="store_false",
+   ap.add_argument("--no-base-rescue", "-E", dest="base_rescue", action="store_false",
                    help="Disable diff-driven rescue pass.")
    ap.set_defaults(base_rescue=True)
 
    # LRC header tags
-   ap.add_argument("--lrc-header", dest="lrc_header", action="store_true",
+   ap.add_argument("--lrc-header", "-a", dest="lrc_header", action="store_true",
                    help="Write PyLy tags into the LRC header. Default: on.")
-   ap.add_argument("--no-lrc-header", dest="lrc_header", action="store_false",
+   ap.add_argument("--no-lrc-header", "-A", dest="lrc_header", action="store_false",
                    help="Do not write header tags.")
    ap.set_defaults(lrc_header=True)
 
@@ -196,6 +199,7 @@ def main(argv: list[str] | None = None) -> int:
 
             base_diff_threshold=ns.base_diff_threshold,
             base_rescue=ns.base_rescue,
+            truth_mode=ns.truth_mode,
 
             lrc_header=ns.lrc_header,
             fetch_config=fetch_config,
