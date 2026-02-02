@@ -233,7 +233,7 @@ PyLy supports two ways to use a text-only lyrics file (or fetched lyrics) to imp
 * Use `--base` when you trust Whisper more than `lyrics.txt`
     - *best-effort cleanup*
 * Use `--truth` when you trust `lyrics.txt` more than Whisper
-    - __only__ activates on high-confidence matches (`--base-threshold`)
+    - __only__ activates on high-confidence matches (`--base-diff-threshold`)
     - *fix/replace the garble*
 
 ### Base (`--base` / `--lyrics`)
@@ -299,6 +299,7 @@ When to use `--truth`:
 | `--base <lyrics.txt>` `-b <lyrics.txt>`                | Use a text-only lyrics file (no timestamps) as a reference for matching and substitution.            |
 | `--base-lyrics <lyrics.txt>`                           | *Alias for `--base`.*                                                                                |
 | `--lyrics <lyrics.txt>`                                | *Alias for `--base`.*                                                                                |
+| `--truth` `--base-truth` `-u`                           | Treat base lyrics as ground truth for patching on high-confidence matches (uses `--base-diff-threshold`). |
 | `--base-strict` `-s`                                   | Drop unmatched Whisper lines when base lyrics are provided.                                          |
 | `--base-threshold <0..1>` `-t <0..1>`                  | Similarity required to replace Whisper text with base lyrics. Default: `0.82`.                       |
 | `--base-window <N>` `-w <N>`                           | Lookahead window (in base lyric lines) used during matching. Default: `12`.                          |
