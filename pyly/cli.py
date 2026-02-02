@@ -112,7 +112,10 @@ def main(argv: list[str] | None = None) -> int:
    ap.add_argument(
       "--layout",
       default=None,
-      help="Optional folder layout hint (lidarr/plex/flat). Used only if tags are missing.",
+      help=(
+         "Optional layout hint: lidarr/plex/flat preset or a custom template string. "
+         "Templates use token braces (e.g. {Artist Name}) and are used only when tags are missing."
+      ),
    )
 
    # Diff / rescue

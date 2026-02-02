@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .console_ui import info
 
 _SPACE_RX = re.compile(r"\s+")
 _YEAR_RX = re.compile(r"\b(19|20)\d{2}\b")
@@ -142,7 +145,14 @@ def _extract_media_info(data: dict) -> MediaInfo:
 
 
 def _infer_path_guess(audio_path: Path, layout: str | None) -> PathGuess:
-   layout_key = (layout or "").strip().lower() or "default"
+   layout_raw = (layout or "").strip()
+   if layout_raw and _is_layout_template(layout_raw):
+      return _infer_from_layout_template(audio_path, layout_raw)
+   layout_key = layout_raw.lower() or "default"
+   return _infer_from_layout_preset(audio_path, layout_key)
+
+
+def _infer_from_layout_preset(audio_path: Path, layout_key: str) -> PathGuess:
    stem = audio_path.stem
    if layout_key == "flat":
       title = _clean_title(stem)
@@ -186,6 +196,121 @@ def _infer_path_guess(audio_path: Path, layout: str | None) -> PathGuess:
       track_number=track_num,
       disc_number=None,
       year=year or "",
+   )
+
+
+def _is_layout_template(layout: str) -> bool:
+   if not layout:
+      return False
+   return any(ch in layout for ch in ("/", "\\", "{", "}"))
+
+
+def _infer_from_layout_template(audio_path: Path, layout: str) -> PathGuess:
+   base_guess = _infer_from_layout_preset(audio_path, "default")
+   normalized_path = _normalize_match_path(audio_path)
+   tokens, rx = _compile_layout_template(layout)
+   flags = re.IGNORECASE if os.name == "nt" else 0
+   match = re.match(rx, normalized_path, flags=flags)
+   if not match:
+      print(info(f"layout template did not match: {audio_path.name}"))
+      return base_guess
+
+   extracted = _extract_layout_tokens(tokens, match)
+   print(info(f"layout template matched: {audio_path.name}"))
+   return _merge_path_guess(base_guess, extracted)
+
+
+def _normalize_match_path(audio_path: Path) -> str:
+   path_no_ext = audio_path.resolve().with_suffix("")
+   return str(path_no_ext).replace("\\", "/")
+
+
+def _compile_layout_template(layout: str) -> tuple[list[str], str]:
+   tokens: list[str] = []
+   parts: list[str] = []
+   normalized = layout.replace("\\", "/")
+   last = 0
+   for match in _TOKEN_RX.finditer(normalized):
+      literal = normalized[last:match.start()]
+      parts.append(_literal_to_regex(literal))
+      token_raw = match.group(1)
+      token_name = _normalize_token_name(token_raw)
+      tokens.append(token_name)
+      parts.append(_token_to_regex(token_name))
+      last = match.end()
+   parts.append(_literal_to_regex(normalized[last:]))
+   return tokens, "^" + "".join(parts) + "$"
+
+
+def _literal_to_regex(literal: str) -> str:
+   out: list[str] = []
+   for ch in literal:
+      if ch == "/":
+         out.append(re.escape("/"))
+      elif ch.isspace():
+         out.append(r"\s*")
+      elif ch == "(":
+         out.append(r"\s*\(\s*")
+      elif ch == ")":
+         out.append(r"\s*\)\s*")
+      else:
+         out.append(re.escape(ch))
+   return "".join(out)
+
+
+def _token_to_regex(token_name: str) -> str:
+   if token_name in {"track:0", "track:00", "medium:0", "medium:00"}:
+      return r"(\\d+)"
+   return r"([^/]*?)"
+
+
+def _normalize_token_name(raw: str) -> str:
+   lowered = raw.strip().lower()
+   return _SPACE_RX.sub(" ", lowered)
+
+
+def _extract_layout_tokens(tokens: list[str], match: re.Match) -> dict[str, str | int | None]:
+   extracted: dict[str, str | int | None] = {}
+   for idx, token in enumerate(tokens, start=1):
+      value = match.group(idx) if match else ""
+      if value is None:
+         continue
+      cleaned = _SPACE_RX.sub(" ", value).strip()
+      if not cleaned:
+         continue
+      if token in {"track:0", "track:00"}:
+         extracted["track_number"] = _safe_int(cleaned)
+      elif token in {"medium:0", "medium:00"}:
+         extracted["disc_number"] = _safe_int(cleaned)
+      elif token == "artist name":
+         extracted["artist"] = cleaned
+      elif token == "album title":
+         extracted["album"] = cleaned
+      elif token == "track title":
+         extracted["title"] = cleaned
+      elif token == "release year":
+         extracted["year"] = cleaned
+   return extracted
+
+
+def _merge_path_guess(base: PathGuess, extracted: dict[str, str | int | None]) -> PathGuess:
+   artist = str(extracted.get("artist") or "").strip() or base.artist
+   album = str(extracted.get("album") or "").strip() or base.album
+   title = str(extracted.get("title") or "").strip() or base.title
+   year = str(extracted.get("year") or "").strip() or base.year
+   track_number = extracted.get("track_number")
+   disc_number = extracted.get("disc_number")
+   if not isinstance(track_number, int):
+      track_number = base.track_number
+   if not isinstance(disc_number, int):
+      disc_number = base.disc_number
+   return PathGuess(
+      artist=artist,
+      album=album,
+      title=title,
+      track_number=track_number,
+      disc_number=disc_number,
+      year=year,
    )
 
 
