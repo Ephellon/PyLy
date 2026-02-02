@@ -189,6 +189,28 @@ If tags are missing, you can provide a folder layout hint:
 * `--layout lidarr` or `--layout plex` (artist/album/track folder structures)
 * `--layout flat` (all files in one folder)
 
+You can also supply a **custom layout template** string instead of a preset. If the `--layout` value
+contains path separators (`/` or `\`) or token braces (`{}`), it is treated as a template. The template
+describes the full path up to the filename stem (the audio extension is ignored). Tokens are
+case-insensitive and use the same names as fetch templates (matching is case-insensitive on Windows).
+
+Examples:
+
+```bash
+pyly "X:\Music" --recursive --layout "X:\Music\{Album Title} - {Artist Name}\{Track Title} ({track:00})"
+```
+
+```bash
+pyly "/music" --recursive --layout "/music/{Artist Name}/{Album Title}/{track:0} - {Track Title}"
+```
+
+```bash
+pyly "X:\Music" --recursive --layout "X:\Music\{Artist Name}\{Album Title}\{track:00} - {Track Title}"
+```
+
+When a custom layout template is used, PyLy will log (cyan) whether the template matched each file.
+If a template does not match, PyLy falls back to the normal path heuristics and continues.
+
 ---
 
 ## ffmpeg handling
