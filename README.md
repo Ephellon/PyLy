@@ -36,12 +36,14 @@ PyLy is an **offline-default, Python-first** tool that generates PlexAmp-compati
 * Whisper installed as a Python module
     * `pip install whisper`
 * ffmpeg available on PATH (used only for decoding during transcription)
-    * ffmpeg `6.1.1` is available at `./ff/`, see [ffmpeg handling](#ffmpeg-handling)
+    * `ffmpeg` can also be placed at `./ff/`, see [ffmpeg handling](#ffmpeg-handling)
 
 ## Optional
 
 * Torch (CUDA)
     * `pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121`
+* ffprobe available on PATH (used only for tag reading)
+    * `ffprobe` can also be placed at `./ff/`, see [ffmpeg handling](#ffmpeg-handling)
 
 ## Install
 
