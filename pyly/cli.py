@@ -211,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
          if status == "skipped":
             skipped_count += 1
             eta.add(min(dt, 2.0))
-            live.commit(ok(f"Skipped ({result.get('reason', 'existing output')})  [{format_duration(dt)}]"))
+            live.commit(ok(f"Skipped ({Path(result.get('lrc', '')).name})  [{format_duration(dt)}]"))
          elif status == "dry_run":
             ok_count += 1
             eta.add(min(dt, 2.0))
@@ -233,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
       live.update(f"Progress: {completed}/{total}  |  Overall ETA ~ {overall_eta}")
 
    live.clear()
-   banner(f"Done. OK={ok_count} SKIPPED={skipped_count} FAIL={fail_count}")
+   banner(f"{ok_count} - OK / {skipped_count} - SKIPPED / {fail_count} - FAIL")
    return 0 if fail_count == 0 else 1
 
 

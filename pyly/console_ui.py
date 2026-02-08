@@ -217,24 +217,24 @@ class Spinner:
 
 
 def banner(text: str) -> None:
-   print(f"\n=== {text} ===")
+   print(f"\n[   {text}    ]")
 
 
 def step(msg: str) -> None:
-   print(f" - {msg}")
+   print(f"\t- {msg}")
 
 
 def ok(msg: str) -> str:
-   return _colorize(f" ✓ {msg}", _ANSI_GREEN)
+   return _colorize(f"\t[✓] {msg}", _ANSI_GREEN)
 
 
 def warn(msg: str) -> str:
-   return _colorize(f" ! {msg}", _ANSI_YELLOW)
+   return _colorize(f"\t[!] {msg}", _ANSI_YELLOW)
 
 
 def err(msg: str) -> str:
-   return _colorize(f" X {msg}", _ANSI_RED)
+   return _colorize(f"\t[X] {msg}", _ANSI_RED)
 
 
 def info(msg: str) -> str:
-   return _colorize(f" i {msg}", _ANSI_CYAN)
+   return _colorize(f"\t(i) {msg}", _ANSI_CYAN)
