@@ -11,6 +11,8 @@ from pathlib import Path
 from .console_ui import info, warn
 from .template_tokens import expand_template
 
+import unicodedata
+
 
 DEFAULT_PROVIDER = "lrclib"
 DEFAULT_TEMPLATE = "{Artist Name} {Track Title}"
@@ -50,6 +52,21 @@ def expand_query(template: str, audio_path: Path, layout: str | None = None) -> 
    return expand_template(template, audio_path, layout=layout)
 
 
+def _repair_mojibake(s: str) -> str:
+   if not s:
+      return s
+   # common signature of UTF-8 bytes mis-decoded as cp1252/latin1
+   if "â" in s or "Ã" in s:
+      for enc in ("cp1252", "latin-1"):
+         try:
+            fixed = s.encode(enc).decode("utf-8")
+            if "â" not in fixed and "Ã" not in fixed:
+               return unicodedata.normalize("NFC", fixed)
+         except Exception:
+            pass
+   return unicodedata.normalize("NFC", s)
+
+
 def fetch_base_lyrics_lines(
    config: FetchConfig,
    audio_path: Path,
@@ -59,6 +76,7 @@ def fetch_base_lyrics_lines(
    provider = (config.provider or DEFAULT_PROVIDER).lower()
    template = config.template or DEFAULT_TEMPLATE
    query = expand_query(template, audio_path, layout=layout)
+   query = _repair_mojibake(query)
 
    if not query:
       _log_info(f"FETCH: skipped (empty query)", log_fn=log_fn)
