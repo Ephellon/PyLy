@@ -111,6 +111,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="Max Whisper lines to merge into one base match. Default: 5")
    ap.add_argument("--fetch", "-f", nargs="?", const="", default=None,
                    help="Fetch base lyrics online (optional provider/template).")
+   ap.add_argument("--keep-as-primary", "-k", action="store_true",
+                   help="Prefer fetched synced LRC when available (implies --fetch).")
+   ap.add_argument("--keep-as-alternate", "-K", action="store_true",
+                   help="Keep fetched synced LRC as <basename>.fetched.lrc while generating Whisper LRC (implies --fetch).")
    ap.add_argument(
       "--layout",
       "-y",
@@ -143,6 +147,13 @@ def main(argv: list[str] | None = None) -> int:
    if ns.online:
       print("[X] --online is not implemented. Offline Whisper is the default.", file=sys.stderr)
       return 2
+
+   if ns.keep_as_primary and ns.keep_as_alternate:
+      print("[X] --keep-as-primary and --keep-as-alternate are mutually exclusive.", file=sys.stderr)
+      return 2
+
+   if (ns.keep_as_primary or ns.keep_as_alternate) and ns.fetch is None:
+      ns.fetch = ""
 
    try:
       inputs = _collect_inputs([ns.path], ns.recursive)
@@ -203,6 +214,7 @@ def main(argv: list[str] | None = None) -> int:
 
             lrc_header=ns.lrc_header,
             fetch_config=fetch_config,
+            fetch_keep_mode="primary" if ns.keep_as_primary else ("alternate" if ns.keep_as_alternate else None),
             layout=ns.layout,
          )
          dt = time.time() - t0

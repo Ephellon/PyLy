@@ -160,8 +160,10 @@ This does **not** rewrite lyrics or alter meaning. The base lyrics are used only
 PyLy can fetch **plain text lyrics** as a base reference when a local base file is not provided (or is missing).
 
 * `--fetch` enables fetching (default provider: `lrclib`).
+* `-k` / `--keep-as-primary` implies `--fetch` and prefers fetched synced LRC as the primary output when available.
+* `-K` / `--keep-as-alternate` implies `--fetch`, keeps fetched synced LRC as `<basename>.fetched.lrc`, and still generates Whisper output.
 * Results are cached in `.pyly_cache/` to avoid repeated requests.
-* Fetched lyrics are treated the same as local base lyrics (timings still come from Whisper).
+* Fetched plain lyrics are treated the same as local base lyrics (timings still come from Whisper).
 
 Examples:
 
@@ -309,5 +311,7 @@ When to use `--truth`:
 | `--no-base-rescue` `-E`                                | Disable diff-driven rescue pass.                                                                     |
 | `--lrc-header` `-a`                                    | Write PyLy header tags and statistics into the LRC. Default: on.                                     |
 | `--no-lrc-header` `-A`                                 | Do not write header tags into the LRC.                                                               |
-| `--fetch [provider/template]` `-f [provider/template]` | Fetch base lyrics online (default provider: `lrclib`).                                               |
+| `--fetch [provider/template]` `-f [provider/template]` | Fetch base lyrics online (default provider: `lrclib`). With `-k`, prefer synced online LRC; with `-K`, keep synced online LRC as `<basename>.fetched.lrc`. |
+| `--keep-as-primary` `-k`                               | Prefer fetched synced LRC as primary output and skip Whisper when synced lyrics are available.       |
+| `--keep-as-alternate` `-K`                             | Keep fetched synced LRC as `<basename>.fetched.lrc` while still generating Whisper primary output.   |
 | `--layout <hint>` `-y <hint>`                          | Layout hint or template schema for deriving metadata from paths when tags are missing.               |

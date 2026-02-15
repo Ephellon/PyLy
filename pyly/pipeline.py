@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .srt_io import SrtBlock
+from .console_ui import info
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,7 @@ def run_pipeline(
    # output niceties
    lrc_header: bool = True,
    fetch_config=None,
+   fetch_keep_mode: str | None = None,
    layout: str | None = None,
 ) -> dict[str, str]:
    """
@@ -119,7 +121,7 @@ def run_pipeline(
    from .srt_io import read_srt
    from .base_lyrics import load_base_lyrics_lines, apply_base_lyrics, apply_truth_patching
    from .lrc_writer import srt_blocks_to_lrc_lines, write_lrc
-   from .lyrics_fetch import fetch_base_lyrics_lines
+   from .lyrics_fetch import fetch_lyrics_data
 
    audio_path = Path(audio_path)
 
@@ -129,6 +131,7 @@ def run_pipeline(
    out_srt = audio_path.with_suffix(".srt")
    out_red = audio_path.with_suffix(".red.srt")
    out_lrc = audio_path.with_suffix(".lrc")
+   out_fetched_lrc = Path(str(audio_path.with_suffix("")) + ".fetched.lrc")
    log_path = audio_path.with_suffix(".pyly.log") if write_log else None
 
    def _log(msg: str) -> None:
@@ -139,6 +142,9 @@ def run_pipeline(
             f.write(msg.rstrip() + "\n")
       except Exception:
          pass
+
+   def _write_text_file(path: Path, text: str) -> None:
+      path.write_text(text, encoding="utf-8", newline="\n")
 
    def _read_lrc_text_lines(lrc_lines: list[str]) -> list[str]:
       # For matching: strip timestamps, keep text only
@@ -178,16 +184,36 @@ def run_pipeline(
       filtered = {k: v for (k, v) in kwargs.items() if k in sig.parameters}
       return apply_fn(**filtered)
 
-   # Skip existing output unless overwrite
-   if out_lrc.exists() and not overwrite:
-      return {"status": "skipped", "lrc": str(out_lrc), "reason": "existing .lrc"}
-
    if dry_run:
       return {"status": "dry_run", "lrc": str(out_lrc)}
 
    # Reset log
    if log_path:
       log_path.write_text("", encoding="utf-8", newline="\n")
+
+   fetched = None
+   if fetch_config and getattr(fetch_config, "enabled", False):
+      fetched = fetch_lyrics_data(fetch_config, audio_path, log_fn=_log, layout=layout)
+
+   mode = (fetch_keep_mode or "").strip().lower() or None
+
+   if mode == "primary" and (not fetched or not fetched.synced_lrc_text):
+      _log("FETCH MODE PRIMARY: no synced fetched lyrics; running Whisper pipeline")
+      print(info("PRIMARY: no synced fetched LRC; continuing with Whisper pipeline"))
+
+   if mode == "primary" and fetched and fetched.synced_lrc_text:
+      if out_lrc.exists() and not overwrite:
+         _log("FETCH MODE PRIMARY: synced lyrics available but output exists; skipping write due to --overwrite off")
+         print(info(f"PRIMARY: fetched synced LRC available; skipped write ({out_lrc.name}, exists)"))
+         return {"status": "skipped", "lrc": str(out_lrc), "reason": "existing .lrc"}
+      _write_text_file(out_lrc, fetched.synced_lrc_text)
+      _log("FETCH MODE PRIMARY: used fetched synced LRC, skipped Whisper")
+      print(info(f"PRIMARY: used fetched synced LRC, skipped Whisper ({out_lrc.name})"))
+      return {"status": "ok", "lrc": str(out_lrc)}
+
+   # Skip existing output unless overwrite
+   if out_lrc.exists() and not overwrite:
+      return {"status": "skipped", "lrc": str(out_lrc), "reason": "existing .lrc"}
 
    try:
       # ---- Whisper -> .srt ----
@@ -237,14 +263,12 @@ def run_pipeline(
       elif base_lyrics_path:
          expected = str(resolved_base) if resolved_base else str(base_lyrics_path)
          _log(f"BASE: missing (expected: {expected})")
-         if fetch_config and getattr(fetch_config, "enabled", False):
-            base_lines = fetch_base_lyrics_lines(fetch_config, audio_path, log_fn=_log, layout=layout)
-            if base_lines:
-               base_source = f"fetch:{getattr(fetch_config, 'provider', '')}"
-      elif fetch_config and getattr(fetch_config, "enabled", False):
-         base_lines = fetch_base_lyrics_lines(fetch_config, audio_path, log_fn=_log, layout=layout)
-         if base_lines:
-            base_source = f"fetch:{getattr(fetch_config, 'provider', '')}"
+         if fetched and fetched.plain_text_lines:
+            base_lines = fetched.plain_text_lines
+            base_source = f"fetch:{fetched.provider}"
+      elif fetched and fetched.plain_text_lines:
+         base_lines = fetched.plain_text_lines
+         base_source = f"fetch:{fetched.provider}"
 
       if base_lines:
          whisper_text_lines = _read_lrc_text_lines(lrc_lines)
@@ -337,6 +361,19 @@ def run_pipeline(
 
       # ---- Write LRC ----
       write_lrc(out_lrc, lrc_lines, overwrite=overwrite, headers=headers if headers else None)
+
+      if mode == "alternate":
+         if fetched and fetched.synced_lrc_text:
+            if out_fetched_lrc.exists() and not overwrite:
+               _log("FETCH MODE ALTERNATE: synced lyrics available but sidecar exists; skipping sidecar due to --overwrite off")
+               print(info(f"ALTERNATE: generated Whisper LRC; skipped {out_fetched_lrc.name} (exists)"))
+            else:
+               _write_text_file(out_fetched_lrc, fetched.synced_lrc_text)
+               _log(f"FETCH MODE ALTERNATE: wrote {out_fetched_lrc.name} and generated Whisper LRC")
+               print(info(f"ALTERNATE: wrote {out_fetched_lrc.name} and generated Whisper LRC"))
+         else:
+            _log("FETCH MODE ALTERNATE: no synced fetched lyrics; generated Whisper LRC only")
+            print(info("ALTERNATE: no synced fetched LRC; generated Whisper LRC only"))
 
       # ---- Cleanup ----
       if clean:
