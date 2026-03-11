@@ -68,23 +68,7 @@ def _norm(text: str) -> str:
 
    # Targeted phrase folding (small, explicit, deterministic)
    replacements = {
-      "did not seem": "deny see",
-      "didnt seem": "deny see",
-      "denied seeing": "deny see",
-      "denied see": "deny see",
-      "seeing me": "see me",
-
-      "its cuz": "cause",
-      "it's cuz": "cause",
-      "is cuz": "cause",
-
-      "im": "i am",
-
-      # Common phonetic failures for this track class
-      "episode of grips": "episode of cribs",
-      "grips": "cribs",
-      "global load": "blow below",
-      "dont an": "on an",
+      # "from text": "to text",
    }
 
    for k, v in replacements.items():

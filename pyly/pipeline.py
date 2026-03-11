@@ -187,6 +187,10 @@ def run_pipeline(
    if dry_run:
       return {"status": "dry_run", "lrc": str(out_lrc)}
 
+   # Skip existing output unless overwrite
+   if out_lrc.exists() and not overwrite:
+      return {"status": "skipped", "lrc": str(out_lrc), "reason": "existing .lrc"}
+
    # Reset log
    if log_path:
       log_path.write_text("", encoding="utf-8", newline="\n")
@@ -210,10 +214,6 @@ def run_pipeline(
       _log("FETCH MODE PRIMARY: used fetched synced LRC, skipped Whisper")
       print(info(f"PRIMARY: used fetched synced LRC, skipped Whisper ({out_lrc.name})"))
       return {"status": "ok", "lrc": str(out_lrc)}
-
-   # Skip existing output unless overwrite
-   if out_lrc.exists() and not overwrite:
-      return {"status": "skipped", "lrc": str(out_lrc), "reason": "existing .lrc"}
 
    try:
       # ---- Whisper -> .srt ----
