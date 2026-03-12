@@ -64,7 +64,7 @@ def expand_template(template: str, audio_path: Path, layout: str | None = None) 
 
 def _build_context(audio_path: Path, layout: str | None) -> TokenContext:
    tags, media_info = _probe_metadata(audio_path)
-   path_guess = _infer_path_guess(audio_path, layout)
+   path_guess = infer_path_guess(audio_path, layout)
    return TokenContext(
       audio_path=audio_path,
       layout=layout,
@@ -144,15 +144,15 @@ def _extract_media_info(data: dict) -> MediaInfo:
    )
 
 
-def _infer_path_guess(audio_path: Path, layout: str | None) -> PathGuess:
+def infer_path_guess(audio_path: Path, layout: str | None) -> PathGuess:
    layout_raw = (layout or "").strip()
    if layout_raw and _is_layout_template(layout_raw):
-      return _infer_from_layout_template(audio_path, layout_raw)
+      return infer_from_layout_template(audio_path, layout_raw)
    layout_key = layout_raw.lower() or "default"
-   return _infer_from_layout_preset(audio_path, layout_key)
+   return infer_from_layout_preset(audio_path, layout_key)
 
 
-def _infer_from_layout_preset(audio_path: Path, layout_key: str) -> PathGuess:
+def infer_from_layout_preset(audio_path: Path, layout_key: str) -> PathGuess:
    stem = audio_path.stem
    if layout_key == "flat":
       title = _clean_title(stem)
@@ -205,8 +205,8 @@ def _is_layout_template(layout: str) -> bool:
    return any(ch in layout for ch in ("/", "\\", "{", "}"))
 
 
-def _infer_from_layout_template(audio_path: Path, layout: str) -> PathGuess:
-   base_guess = _infer_from_layout_preset(audio_path, "default")
+def infer_from_layout_template(audio_path: Path, layout: str) -> PathGuess:
+   base_guess = infer_from_layout_preset(audio_path, "default")
    normalized_path = _normalize_match_path(audio_path)
    tokens, rx = _compile_layout_template(layout)
    flags = re.IGNORECASE if os.name == "nt" else 0
@@ -260,7 +260,7 @@ def _literal_to_regex(literal: str) -> str:
 
 def _token_to_regex(token_name: str) -> str:
    if token_name in {"track:0", "track:00", "medium:0", "medium:00"}:
-      return r"(\\d+)"
+      return r"(\d+)"
    return r"([^/]*?)"
 
 
