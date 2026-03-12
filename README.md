@@ -1,317 +1,393 @@
-# PyLy (Python Lyrics Pipeline)
+# PyLy — Lyrics for Plex, the offline way
 
-PyLy is an **offline** tool that generates Plex-compatible `.lrc` (synchronized) lyric files from audio by:
+PyLy listens to your music and writes the lyrics file for it — no account needed, no internet required by default.
 
-1. Running (offline) Whisper transcription to generate an `.srt` file
-2. Filtering noise **at the text/subtitle level only** to a `.red.srt`
-3. Converting the `.red.srt` file to an `.lrc` for Plex
+It runs your audio through [Whisper](https://github.com/openai/whisper) (an offline speech-to-text model), cleans up the result, and saves a `.lrc` file next to your audio. Plex picks that file up automatically and shows lyrics in sync as the song plays.
+
+> **Your audio files are never touched.** PyLy only ever reads them.
+
+---
 
 ## Table of Contents
 
-* [Overview](#pyly-python-lyrics-pipeline)
-* [Non-negotiables](#non-negotiables)
-* [Requirements](#requirements)
+* [Before you start](#before-you-start)
 * [Install](#install)
-* [Usage](#usage)
-* [Outputs](#outputs)
-* [Audio formats](#audio-formats)
-* [Base lyrics assistance](#base-lyrics-assistance)
-* [Online base lyric fetching](#online-base-lyric-fetching)
-* [Fetch templates and layout hints](#fetch-templates-and-layout-hints)
-* [ffmpeg handling](#ffmpeg-handling)
-* [Online mode](#online-mode)
+* [Quick start](#quick-start)
+* [What PyLy creates](#what-pyly-creates)
+* [Getting better results](#getting-better-results)
+  * [Fetching lyrics from the internet](#fetching-lyrics-from-the-internet)
+  * [Providing your own lyrics file](#providing-your-own-lyrics-file)
+  * [Choosing a Whisper model](#choosing-a-whisper-model)
+* [Lyric providers](#lyric-providers)
+* [Re-downloading lyrics](#re-downloading-lyrics)
+* [Advanced: fine-tuning the lyrics alignment](#advanced-fine-tuning-the-lyrics-alignment)
+* [Advanced: fetch templates and folder layout hints](#advanced-fetch-templates-and-folder-layout-hints)
+* [Advanced: what goes inside a .lrc file](#advanced-what-goes-inside-a-lrc-file)
+* [ffmpeg](#ffmpeg)
 * [All flags](#all-flags)
 
-## Non‑negotiables
+---
 
-* **Source audio is never modified** (no re-encode, normalize, denoise, etc).
-* Filtering is **text-only** on transcription output.
-* Offline Whisper (`python -m whisper`) is the default engine.
-* Output is plain `.lrc` with `[mm:ss.xx] lyric line` timestamps (UTF‑8).
-* No overwriting of existing `.lrc` files unless explicitly requested.
+## Before you start
 
-## Requirements
+You'll need a few things installed:
 
-* Python 3.10+
-* Whisper installed as a Python module
-    * `pip install whisper`
-* `ffmpeg` available on PATH (used only for decoding during transcription)
-    * `ffmpeg.exe` can also be placed at `./ff/ffmpeg.exe`, see [ffmpeg handling](#ffmpeg-handling)
+- **Python 3.10 or newer** — [python.org](https://www.python.org/downloads/)
+- **Whisper** — the speech-to-text model that does the heavy lifting
+  ```
+  pip install whisper
+  ```
+- **ffmpeg** — used internally to read audio. If you don't have it, see [ffmpeg](#ffmpeg) below.
 
-## Optional
+**Optional but recommended:**
 
-* Torch (CUDA)
-    * `pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121`
-* `ffprobe` available on PATH (used only for tag reading)
-    * `ffprobe.exe` can also be placed at `./ff/ffprobe.exe`, see [ffmpeg handling](#ffmpeg-handling)
+- **A CUDA-capable GPU** — Whisper is noticeably faster on a GPU. If you have an Nvidia card:
+  ```
+  pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+  ```
+  Then pass `--device cuda` when running PyLy.
+
+- **ffprobe** — part of the ffmpeg package on most systems. Used to read track metadata (artist, album, etc.) and measure the length of your audio. Not required, but things work better with it.
+
+---
 
 ## Install
 
-```bash
+From the project folder:
+
+```
 pip install -e .
 ```
 
-* Editable install (recommended while developing)
+Or on Windows, just use `pyly.bat` — it will install PyLy automatically the first time and run your command:
 
-```bash
-pyly.bat <file-path(s)> [flags]
+```
+pyly.bat "X:\Music\Artist\Album\01 - Track.flac"
 ```
 
-* Installs PyLy and runs the command afterwards
+---
 
-## Usage
+## Quick start
 
-### Single file
+**One song:**
 
-```bash
+```
 pyly "X:\Music\Artist\Album\01 - Track.flac"
 ```
 
-### Batch
+PyLy will listen to the file, figure out the words, and save `01 - Track.lrc` in the same folder. That's it.
 
-```bash
+**A whole album:**
+
+```
+pyly "X:\Music\Artist\Album"
+```
+
+**Your entire music library:**
+
+```
 pyly "X:\Music" --recursive
 ```
 
-### Overwrite existing `.lrc`
+**Already have `.lrc` files and want to regenerate them?**
 
-```bash
+By default PyLy won't touch existing files. Add `--overwrite` to replace them:
+
+```
 pyly "X:\Music" --recursive --overwrite
 ```
 
-### Remove intermediates after success
+**Want to keep things tidy?** Add `--clean` to delete the intermediate files PyLy creates along the way (they're only useful for debugging):
 
-```bash
+```
 pyly "X:\Music\Artist\Album\01 - Track.flac" --clean
 ```
 
 ---
 
-## Outputs
+## What PyLy creates
 
-For `Track.flac`:
+When you run PyLy on `01 - Track.flac`, you'll find these new files in the same folder:
 
-* `Track.srt` — Whisper transcription output
-* `Track.red.srt` — Noise-reduced subtitles (text-only filtering)
-* `Track.lrc` — Final Plex-compatible lyrics
-* `Track.pyly.log` — Optional per-file log (if `--log`)
+| File | What it is |
+|---|---|
+| `01 - Track.srt` | Raw transcript from Whisper |
+| `01 - Track.red.srt` | Same transcript, with noise and junk lines removed |
+| `01 - Track.lrc` | The final lyrics file — this is what Plex reads |
+| `01 - Track.pyly.log` | A log of what happened, only created if you pass `--log` |
 
-## Audio formats
+The `.srt` files are just intermediate steps. The only file you actually need is the `.lrc`. You can delete the others, or have PyLy do it for you with `--clean`.
 
-PyLy accepts common lossless and lossy audio formats:
-
-* `.mp3`, `.flac`, `.wav`, `.m4a`, `.aac`, `.ogg`, `.opus`, `.alac`, `.wma`, `.aiff`
-
-## Base lyrics assistance
-
-PyLy can optionally use a **text-only lyrics file** (no timestamps) as a reference to improve output quality when Whisper is inaccurate or incoherent.
-
-This does **not** rewrite lyrics or alter meaning. The base lyrics are used only for **matching and substitution** against Whisper’s transcription while preserving Whisper-derived timing.
-
-### Base lyric flags
-
-* `--base <lyrics.txt>`
-
-  * Provide a plain UTF-8 text file containing lyrics in order (no timestamps).
-  * Lines are matched monotonically against Whisper output.
-  * Supports wildcards in filename (e.g., `--base "*.txt"` resolves per-audio file).
-
-* `--base-strict`
-
-  * Drop unmatched Whisper lines when base lyrics are provided.
-  * Useful when Whisper output is very noisy and the base lyrics are trusted.
-
-* `--base-threshold <0..1>` (default: `0.82`)
-
-  * Similarity score required to replace a Whisper line with a base lyric line.
-
-* `--base-window <N>` (default: `12`)
-
-  * Lookahead window (in base lyric lines) when attempting to match Whisper output.
-
-* `--base-max-merge <N>` (default: `5`)
-
-  * Maximum number of Whisper lines that can merge into a single base lyric match.
-
-* `--base-diff-threshold <0..1>` (default: `0.75`)
-
-  * Global similarity required to enable the rescue pass.
-
-* `--base-rescue` / `--no-base-rescue`
-
-  * Toggle the diff-driven rescue pass (enabled by default when base lyrics are used).
-
-* `--lrc-header` / `--no-lrc-header`
-
-  * Control whether PyLy writes `[re:]`, `[by:]`, and base-match stats into the LRC header.
-
-### Behavior
-
-* Whisper timings are always preserved.
-* Base lyrics are never modified or rewritten.
-* Unmatched lines fall back to Whisper output unless `--base-strict` is used.
-* If base lyrics do not align well, PyLy safely degrades to Whisper-only behavior.
-* A rescue pass can optionally drop low-confidence filler and fill missed base lines when overall similarity is high enough.
+**Supported audio formats:** `.mp3` `.flac` `.wav` `.m4a` `.aac` `.ogg` `.opus` `.alac` `.wma` `.aiff`
 
 ---
 
-## Online base lyric fetching
+## Getting better results
 
-PyLy can fetch **plain text lyrics** as a base reference when a local base file is not provided (or is missing).
+Whisper is impressive, but it isn't perfect — especially on songs with heavy production, fast delivery, or unusual pronunciation. Here are the main ways to improve what you get out of PyLy.
 
-* `--fetch` enables fetching (default provider: `lrclib`).
-* `-k` / `--keep-as-primary` implies `--fetch` and prefers fetched synced LRC as the primary output when available.
-* `-K` / `--keep-as-alternate` implies `--fetch`, keeps fetched synced LRC as `<basename>.fetched.lrc`, and still generates Whisper output.
-* Results are cached in `.pyly_cache/` to avoid repeated requests.
-* Fetched plain lyrics are treated the same as local base lyrics (timings still come from Whisper).
+### Fetching lyrics from the internet
 
-Examples:
+The quickest way to get accurate lyrics is to let PyLy look them up online and use them as a reference. It still uses Whisper for the timing, but it replaces Whisper's guessed words with the correct ones wherever they match closely enough.
 
-```bash
+```
 pyly "X:\Music\Artist\Album\01 - Track.flac" --fetch
+```
+
+If you'd rather skip Whisper entirely and just use the online lyrics as-is (synced timestamps and all, if available), use `--keep-as-primary`:
+
+```
+pyly "X:\Music\Artist\Album\01 - Track.flac" --keep-as-primary
+```
+
+Or if you want both — the online synced lyrics saved as a separate file, and PyLy's Whisper version as the main one:
+
+```
+pyly "X:\Music\Artist\Album\01 - Track.flac" --keep-as-alternate
+```
+
+This saves the fetched version as `01 - Track.fetched.lrc` and the Whisper version as the normal `01 - Track.lrc`.
+
+Results are saved locally so PyLy won't re-fetch the same song twice.
+
+### Providing your own lyrics file
+
+If you already have the correct lyrics for a song as a plain text file (just the words, no timestamps), you can hand them to PyLy directly:
+
+```
+pyly "X:\Music\Artist\Album\01 - Track.flac" --base "lyrics.txt"
+```
+
+PyLy will use Whisper's timing but replace the guessed words with yours wherever they match. If Whisper is mostly right but has a few wrong words here and there, this cleans those up nicely.
+
+If you have a lyrics file for every track and they're named the same as the audio file, you can use a wildcard:
+
+```
+pyly "X:\Music\Artist\Album" --base "*.txt"
+```
+
+For each `.flac` (or `.mp3`, etc.) it finds, PyLy will look for a matching `.txt` with the same name in the same folder.
+
+**If you really trust your lyrics file** and want PyLy to fix even the sections where Whisper has gone completely off the rails, add `--truth`:
+
+```
+pyly "X:\Music\Artist\Album\01 - Track.flac" --base "lyrics.txt" --truth
+```
+
+This is more aggressive — it replaces garbled Whisper sections with your lyrics rather than just cleaning up close matches. It only kicks in when PyLy is confident the overall transcript is aligned to the right song, so it won't silently corrupt things if the wrong lyrics file is used.
+
+### Choosing a Whisper model
+
+Whisper comes in several sizes. Bigger models are slower but more accurate:
+
+| Model | Speed | Accuracy |
+|---|---|---|
+| `tiny` | Very fast | Lower |
+| `base` | Fast | Decent |
+| `small` | Moderate *(default)* | Good |
+| `medium` | Slow | Better |
+| `large` | Slowest | Best |
+
+```
+pyly "X:\Music" --recursive --model large
+```
+
+If you have a GPU, `medium` or `large` are worth trying. On CPU, `small` is usually the best balance.
+
+---
+
+## Lyric providers
+
+When you use `--fetch`, PyLy pulls lyrics from an online source. You can pick which one:
+
+```
 pyly "X:\Music\Artist\Album\01 - Track.flac" --fetch lrclib
-pyly "X:\Music\Artist\Album\01 - Track.flac" --fetch "Radiohead Nude"
+pyly "X:\Music\Artist\Album\01 - Track.flac" --fetch musicbrainz
 ```
 
-## Fetch templates and layout hints
+| Provider | What it does |
+|---|---|
+| `lrclib` *(default)* | A free, open database of synced lyrics. Fast and simple. |
+| `musicbrainz` | Uses MusicBrainz to look up the canonical recording first, then fetches from lrclib using that cleaner metadata. Slower (about 2–3 seconds per track on the first pass), but more accurate for messy or unusual filenames. |
 
-Fetch queries can be template-driven to use metadata or path structure:
+**When to use `musicbrainz`:** If lrclib keeps returning wrong results — for example, a live version instead of the studio track, or a cover instead of the original — MusicBrainz's extra lookup step often gets it right. It also records a MusicBrainz ID inside the `.lrc` file, which is useful if you use other MusicBrainz-aware tools.
 
-```bash
-pyly "X:\Music\Artist\Album\01 - Track.flac" --fetch "lrclib:{Artist Name} {Track Title}"
+Note that `musicbrainz` doesn't host lyrics itself. It just helps find the right entry in lrclib.
+
+To see all available providers:
+
+```
+pyly --list-providers
 ```
 
-Available tokens are derived from tags (via `ffprobe`) or inferred from the path. Common tokens include:
+---
 
-* `{Artist Name}`, `{Album Title}`, `{Track Title}`, `{Track Number}`, `{Disc Number}`, `{Year}`
+## Re-downloading lyrics
 
-If tags are missing, you can provide a folder layout hint:
+When PyLy fetches lyrics online, it saves the source URL inside the `.lrc` file. Later, if the lyrics database has been updated or corrected, you can refresh your files without re-running Whisper:
 
-* `--layout lidarr` or `--layout plex` (`artist/album/track` folder structures)
-* `--layout flat` (all files in one folder)
+```
+# See what would be updated (nothing is written yet)
+pyly "X:\Music" --recursive --redownload
 
-You can also supply a **custom layout template** string instead of a preset. If the `--layout` value
-contains path separators (`/` or `\`) or token braces (`{}`), it is treated as a template. The template
-describes the full path up to the filename stem (the file extension is ignored). Tokens are
-case-insensitive and use the same names as fetch templates (matching is case-insensitive on __Windows__).
-
-Examples:
-
-```bash
-pyly "X:\Music" --recursive --layout "X:\Music\{Album Title} - {Artist Name}\{Track Title} ({track:00})"
+# Actually update the files
+pyly "X:\Music" --recursive --redownload --overwrite
 ```
 
-```bash
-pyly "/music" --recursive --layout "/music/{Artist Name}/{Album Title}/{track:0} - {Track Title}"
+You can point this at a single `.lrc` file, a single audio file (PyLy will find the matching `.lrc`), or a whole folder. Without `--overwrite`, it's a dry run — PyLy checks whether new lyrics are available but doesn't save anything, which is useful for testing before committing to a bulk update.
+
+---
+
+## Advanced: fine-tuning the lyrics alignment
+
+This section covers the controls that affect how PyLy matches a lyrics reference against Whisper's output. You probably won't need these unless the defaults aren't working well for a particular track.
+
+### How matching works
+
+When you provide a lyrics reference (via `--base` or `--fetch`), PyLy goes through Whisper's lines one by one and looks for a close enough match in the reference. If it finds one, it swaps in the reference text but keeps Whisper's timestamp. If it doesn't find a match, it keeps whatever Whisper said.
+
+The main controls:
+
+**`--base-threshold`** (default `0.82`) — How similar a Whisper line needs to be to a reference line before PyLy replaces it. Lower this if PyLy is being too conservative and leaving too many Whisper guesses in place. Raise it if it's replacing lines incorrectly.
+
+**`--base-strict`** — When set, any Whisper line that doesn't closely match a reference line gets dropped entirely rather than kept as-is. Useful when Whisper's output is so noisy that gaps are better than wrong words.
+
+**`--base-window`** (default `12`) — How many lines ahead PyLy looks in the reference when trying to match a Whisper line. You'd lower this for very short, repetitive songs where a distant match might accidentally win.
+
+**`--base-max-merge`** (default `5`) — Sometimes Whisper splits one sung line into several short fragments. This controls how many Whisper fragments can be merged together to match a single reference line.
+
+**`--base-rescue` / `--no-base-rescue`** — After the main matching pass, PyLy does a second cleanup pass to catch any remaining junk lines. This is on by default. Turn it off with `--no-base-rescue` if you notice it removing lines it shouldn't.
+
+**`--base-diff-threshold`** (default `0.75`) — The rescue pass (and `--truth` patching) only runs if the overall transcript is similar enough to the reference. This is the cutoff. If a very noisy track isn't triggering the rescue pass, you could lower this — but carefully, since a lower value means PyLy is less certain the lyrics match the song.
+
+### Base vs. Truth
+
+There are two modes for using a lyrics reference, and which one to use depends on how much you trust Whisper vs. your lyrics file:
+
+**`--base`** — Whisper leads; the reference cleans up close mismatches. If Whisper drifts completely off course on a line, that line stays as Whisper heard it.
+
+**`--truth`** — Your lyrics file leads for sections where Whisper has clearly failed. If PyLy detects a run of lines where Whisper's output looks like garbled nonsense compared to the reference, it replaces that whole run with your lyrics and redistributes Whisper's timestamps across them. This only happens when PyLy is confident it's working with the right song — it won't blindly overwrite things if the lyrics file doesn't match.
+
+---
+
+## Advanced: fetch templates and folder layout hints
+
+By default, PyLy builds its search query from your audio file's tags (artist name, track title). If your tags are missing or incomplete, you can tell it how your folders are laid out instead.
+
+### Layout presets
+
+```
+pyly "X:\Music" --recursive --layout lidarr
+pyly "X:\Music" --recursive --layout plex
+pyly "X:\Music" --recursive --layout flat
 ```
 
-```bash
+`lidarr` and `plex` both expect an `Artist / Album / Track` folder structure, which is the most common. `flat` means all files are in one folder with no subfolders.
+
+### Custom layout templates
+
+If your folder structure doesn't match a preset, you can describe it directly. Say your music is organised like `X:\Music\Pink Floyd\The Wall\01 - In the Flesh.flac` — you'd write:
+
+```
 pyly "X:\Music" --recursive --layout "X:\Music\{Artist Name}\{Album Title}\{track:00} - {Track Title}"
 ```
 
-When a custom layout template is used, PyLy will log whether the template matched each file.
-If a template does not match, PyLy falls back to the normal path heuristics and continues.
+PyLy reads the values directly from the folder and file names, so even without tags it knows the artist is "Pink Floyd", the album is "The Wall", and the track is "In the Flesh".
+
+### Custom search queries
+
+You can also write the search query yourself using the same tokens:
+
+```
+pyly "X:\Music\Artist\Album\01 - Track.flac" --fetch "lrclib:{Artist Name} {Track Title}"
+```
+
+Available tokens (filled from tags first, then inferred from path):
+
+`{Artist Name}` `{Album Title}` `{Track Title}` `{Track Number}` `{Disc Number}` `{Release Year}`
 
 ---
 
-## ffmpeg handling
+## Advanced: what goes inside a .lrc file
 
-PyLy prefers the user’s existing `ffmpeg` installation if it is available on `PATH`.
+By default PyLy writes some metadata at the top of every `.lrc` file. This is mostly useful for players that can display it, and for PyLy's own re-download feature. You can turn it all off with `--no-lrc-header`.
 
-If `ffmpeg` is **not** found on `PATH`, PyLy automatically falls back to a copy located at `./ff/`.
+A typical header looks like this:
 
-This fallback applies **only** to the Whisper subprocess and does not modify the global environment.
+```
+[ar:Pink Floyd]
+[al:The Wall]
+[ti:Comfortably Numb]
+[length:06:23.45]
+[url:https://lrclib.net/api/get/12345]
+[id:12345]
+[PyLy:https://lrclib.net/api/get/12345]
+[re:PyLy]
+[by:PyLy]
+```
 
-If neither a system nor local copy is available, PyLy fails loudly with a clear error message.
+- `[ar:]`, `[al:]`, `[ti:]` — artist, album, and track title
+- `[length:]` — duration of the track, measured from your audio file (or from the provider if ffprobe isn't available)
+- `[url:]` — where the lyrics came from
+- `[id:]` — the provider's internal ID for this track
+- `[PyLy:]` — the URL PyLy uses when you run `--redownload`
+- `[re:]` and `[by:]` — mark the file as PyLy-generated
+
+If you used the `musicbrainz` provider, there will also be a `[mbid:]` tag with the MusicBrainz recording ID.
 
 ---
 
-## Base lyrics vs Truth lyrics
+## ffmpeg
 
-PyLy supports two ways to use a text-only lyrics file (or fetched lyrics) to improve Whisper output. Both modes **preserve Whisper timing** and **never modify audio**.
+PyLy uses ffmpeg internally to decode audio before passing it to Whisper. It also uses ffprobe (which usually comes bundled with ffmpeg) to read track metadata and measure duration.
 
-### Quick rule of thumb
+**If ffmpeg is already on your PATH**, PyLy will use it automatically — nothing to do.
 
-* Use `--base` when you trust Whisper more than `lyrics.txt`
-    - *best-effort cleanup*
-* Use `--truth` when you trust `lyrics.txt` more than Whisper
-    - __only__ activates on high-confidence matches (`--base-diff-threshold`)
-    - *fix/replace the garble*
+**If it isn't**, drop `ffmpeg.exe` (and optionally `ffprobe.exe`) into a folder called `ff` in the same directory as PyLy:
 
-### Base (`--base` / `--lyrics`)
+```
+PyLy/
+  ff/
+    ffmpeg.exe
+    ffprobe.exe
+```
 
-Base lyrics are a *reference* to help clean up Whisper’s text when Whisper is mostly right but has mistakes.
+PyLy will find them there. This keeps things self-contained and doesn't affect anything else on your system.
 
-What PyLy does in base mode:
-
-* Matches Whisper lines to the base lyrics in order (monotonic matching).
-* Replaces a Whisper line with a base line **only when they are similar enough** (`--base-threshold`).
-* Optionally drops unmatched Whisper lines (`--base-strict`).
-* Optionally runs a *rescue pass* to fix small “garbage” segments, but **only when the overall match is already close** (`--base-diff-threshold` + `--base-rescue`).
-
-When to use `--base`:
-
-* You have correct-ish lyrics and want better readability.
-* Whisper is generally tracking the song, but has occasional garble / wrong words.
-* You still want Whisper to “drive” the content when the base doesn’t clearly match.
-
-### Truth (`--truth` / `--base-truth`)
-
-Truth lyrics treat the provided lyrics as **ground truth** *only in safe conditions*.
-
-Truth mode is stricter than base mode:
-
-* PyLy first checks that the base/truth lyrics match the Whisper transcript **overall** (high overall similarity).
-* If the match is close enough, PyLy is allowed to **patch mismatched spans**:
-    * When Whisper outputs obvious nonsense over a small region, PyLy replaces that region with the truth lines.
-    * Timing still comes from Whisper: PyLy reuses timestamps from the mismatched Whisper span.
-
-Truth mode is guarded:
-
-* If the overall similarity is *not* high enough, truth patching is **not applied** (PyLy falls back to normal base behavior or Whisper-only output, depending on flags).
-
-When to use `--truth`:
-
-* You have verified “correct” lyrics (liner notes, official lyrics, etc.).
-* The transcript is mostly aligned, but has small garbage sections (ad-libs, repeated nonsense, partially coherent  sections).
-* You want those segments fixed even when Whisper can’t be trusted.
-
-### How `--fetch` fits in
-
-`--fetch` just provides lyrics text automatically (like an automatic `--lyrics`) and follows the same rules:
-
-* If you’re in `--base` mode, fetched lyrics act as base lyrics.
-* If you’re in `--truth` mode, fetched lyrics act as truth lyrics (but only patch when overall similarity is high).
+If PyLy can't find ffmpeg anywhere, it will tell you clearly rather than fail silently.
 
 ---
 
 ## All flags
 
-| Flag(s) / Syntax(es)                                   | Description                                                                                          |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `<path>`                                               | Audio file or directory to process (positional argument).                                            |
-| `--recursive` `-r`                                     | Recurse into subdirectories when `<path>` is a folder.                                               |
-| `--overwrite` `-o`                                     | Overwrite an existing `.lrc` file if present.                                                        |
-| `--clean` `-c`                                         | Delete intermediate files (`.srt`, `.red.srt`) after successful `.lrc` generation.                   |
-| `--dry-run` `-q`                                       | Show planned actions without running Whisper, fetching lyrics, or writing files.                     |
-| `--log` `-v`                                           | Write a per-file `*.pyly.log` with Whisper command, ffmpeg source, and base-lyrics statistics.       |
-| `--model <name>` `-m <name>`                           | Whisper model to use (`tiny`, `base`, `small`, `medium`, `large`). Default: `small`.                 |
-| `--language <code>` `-l <code>`                        | Force Whisper language (e.g. `en`). If omitted, Whisper auto-detects.                                |
-| `--device <cpu\|cuda>` `-d <cpu\|cuda>`                | Device to run Whisper on. Passed through directly to Whisper.                                        |
-| `--base <lyrics.txt>` `-b <lyrics.txt>`                | Use a text-only lyrics file (no timestamps) as a reference for matching and substitution.            |
-| `--base-lyrics <lyrics.txt>`                           | *Alias for `--base`.*                                                                                |
-| `--lyrics <lyrics.txt>`                                | *Alias for `--base`.*                                                                                |
-| `--truth` `--base-truth` `-u`                           | Treat base lyrics as ground truth for patching on high-confidence matches (uses `--base-diff-threshold`). |
-| `--base-strict` `-s`                                   | Drop unmatched Whisper lines when base lyrics are provided.                                          |
-| `--base-threshold <0..1>` `-t <0..1>`                  | Similarity required to replace Whisper text with base lyrics. Default: `0.82`.                       |
-| `--base-window <N>` `-w <N>`                           | Lookahead window (in base lyric lines) used during matching. Default: `12`.                          |
-| `--base-max-merge <N>` `-x <N>`                        | Max Whisper lines to merge into one base match. Default: `5`.                                        |
-| `--base-diff-threshold <0..1>` `-i <0..1>`             | Global similarity required to enable rescue pass. Default: `0.75`.                                   |
-| `--base-rescue` `-e`                                   | Enable diff-driven rescue pass (default when base lyrics are used).                                  |
-| `--no-base-rescue` `-E`                                | Disable diff-driven rescue pass.                                                                     |
-| `--lrc-header` `-a`                                    | Write PyLy header tags and statistics into the LRC. Default: on.                                     |
-| `--no-lrc-header` `-A`                                 | Do not write header tags into the LRC.                                                               |
-| `--fetch [provider/template]` `-f [provider/template]` | Fetch base lyrics online (default provider: `lrclib`). With `-k`, prefer synced online LRC; with `-K`, keep synced online LRC as `<basename>.fetched.lrc`. |
-| `--keep-as-primary` `-k`                               | Prefer fetched synced LRC as primary output and skip Whisper when synced lyrics are available.       |
-| `--keep-as-alternate` `-K`                             | Keep fetched synced LRC as `<basename>.fetched.lrc` while still generating Whisper primary output.   |
-| `--layout <hint>` `-y <hint>`                          | Layout hint or template schema for deriving metadata from paths when tags are missing.               |
+| Flag | Short | Description |
+|---|---|---|
+| `<path>` | | Audio file, `.lrc` file (with `--redownload`), or folder |
+| `--recursive` | `-r` | Also process subfolders |
+| `--overwrite` | `-o` | Replace existing `.lrc` files |
+| `--clean` | `-c` | Delete the intermediate `.srt` files after finishing |
+| `--dry-run` | `-q` | Show what would happen without doing anything |
+| `--log` | `-v` | Save a detailed log file alongside each `.lrc` |
+| `--model <n>` | `-m` | Whisper model size: `tiny` `base` `small` `medium` `large`. Default: `small` |
+| `--language <code>` | `-l` | Force a language, e.g. `en`. Whisper auto-detects if omitted |
+| `--device <cpu\|cuda>` | `-d` | Run Whisper on CPU or GPU |
+| `--fetch [provider]` | `-f` | Fetch lyrics online to use as a reference. Providers: `lrclib` (default), `musicbrainz` |
+| `--keep-as-primary` | `-k` | Use fetched synced lyrics as the output; skip Whisper if available |
+| `--keep-as-alternate` | `-K` | Save fetched synced lyrics as `.fetched.lrc`; still generate Whisper output |
+| `--redownload` | `-R` | Re-fetch lyrics from the URL saved in existing `.lrc` files. Requires `--overwrite` to write |
+| `--list-providers` | | Print available lyric providers and exit |
+| `--base <file>` | `-b` | Plain text lyrics file to use as a reference |
+| `--lyrics <file>` | | Alias for `--base` |
+| `--truth` | `-u` | Trust the lyrics reference enough to replace garbled Whisper sections |
+| `--base-strict` | `-s` | Drop any Whisper line that doesn't match the reference, instead of keeping it |
+| `--base-threshold <0..1>` | `-t` | How close a match needs to be before PyLy replaces it. Default: `0.82` |
+| `--base-window <N>` | `-w` | How many lines ahead PyLy looks in the reference. Default: `12` |
+| `--base-max-merge <N>` | `-x` | How many Whisper fragments can merge into one reference line. Default: `5` |
+| `--base-diff-threshold <0..1>` | `-i` | Overall similarity needed to trigger the rescue/truth pass. Default: `0.75` |
+| `--base-rescue` | `-e` | Run the cleanup pass after matching (on by default) |
+| `--no-base-rescue` | `-E` | Turn off the cleanup pass |
+| `--layout <hint>` | `-y` | Folder layout hint when tags are missing: `lidarr` `plex` `flat` or a custom template |
+| `--lrc-header` | `-a` | Write metadata tags into the `.lrc` header (on by default) |
+| `--no-lrc-header` | `-A` | Don't write header tags |
+| `--allow-provider-site-scraping` | | Allow providers that work by scraping websites. Off by default |
+| `--color` / `--no-color` | | Force color output on or off |
