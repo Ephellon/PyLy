@@ -77,7 +77,11 @@ class FetchConfig:
    template: str = DEFAULT_TEMPLATE
    allow_scraping: bool = False
    artist: str | None = None
+   album: str | None = None
    title: str | None = None
+   year: int | None = None
+   track: int | None = None
+   disc: int | None = None
 
 
 @dataclass(frozen=True)

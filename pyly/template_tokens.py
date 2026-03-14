@@ -146,7 +146,7 @@ def _extract_media_info(data: dict) -> MediaInfo:
 
 def infer_path_guess(audio_path: Path, layout: str | None) -> PathGuess:
    layout_raw = (layout or "").strip()
-   if layout_raw and _is_layout_template(layout_raw):
+   if layout_raw and is_layout_template(layout_raw):
       return infer_from_layout_template(audio_path, layout_raw)
    layout_key = layout_raw.lower() or "default"
    return infer_from_layout_preset(audio_path, layout_key)
@@ -199,7 +199,7 @@ def infer_from_layout_preset(audio_path: Path, layout_key: str) -> PathGuess:
    )
 
 
-def _is_layout_template(layout: str) -> bool:
+def is_layout_template(layout: str) -> bool:
    if not layout:
       return False
    return any(ch in layout for ch in ("/", "\\", "{", "}"))
