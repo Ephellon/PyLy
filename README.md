@@ -65,6 +65,15 @@ Or on Windows, just use `pyly.bat` — it will install PyLy automatically the fi
 pyly.bat "X:\Music\Artist\Album\01 - Track.flac"
 ```
 
+Or on Linux systems, just use `pyly.sh` — it will install PyLy automatically the first time and run your command:
+
+```
+# Make the file executable (once)
+sudo chmod +x pyly.sh
+# Run the program as intended
+pyly.sh "X:\Music\Artist\Album\01 - Track.flac"
+```
+
 ---
 
 ## Quick start
