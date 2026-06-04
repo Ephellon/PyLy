@@ -186,9 +186,18 @@ def main(argv: list[str] | None = None) -> int:
       ),
    )
 
+   # Find-better: only reprocess Whisper-transcribed .lrc files
+   ap.add_argument(
+      "--find-better", "-F", action="store_true", default=False,
+      help=(
+         "Only process audio files whose existing .lrc was transcribed by Whisper "
+         "(i.e. has no external [PyLy:<url>] tag). Files with externally fetched lyrics are skipped."
+      ),
+   )
+
    # Provider listing (early-exit, no path required)
    ap.add_argument(
-      "--list-providers", action="store_true", default=False,
+      "--list-providers", "-p", action="store_true", default=False,
       help="Print all available lyric providers and exit.",
    )
 
@@ -240,6 +249,19 @@ def main(argv: list[str] | None = None) -> int:
    if not inputs:
       print("[!] No supported audio files found.", file=sys.stderr)
       return 1
+
+   if ns.find_better:
+      from .lyrics_fetch import read_pyly_url_from_lrc as _read_url
+      filtered = []
+      for audio in inputs:
+         lrc = audio.with_suffix(".lrc")
+         if lrc.exists() and _read_url(lrc) is not None:
+            continue  # externally fetched — skip
+         filtered.append(audio)
+      inputs = filtered
+      if not inputs:
+         print("[!] No Whisper-transcribed files found (all existing .lrc files have an external URL).", file=sys.stderr)
+         return 1
 
    base_arg = Path(ns.base_lyrics) if ns.base_lyrics else None
    if base_arg and base_arg.is_absolute():

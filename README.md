@@ -227,6 +227,7 @@ To see all available providers:
 
 ```
 pyly --list-providers
+pyly -p
 ```
 
 ---
@@ -384,7 +385,8 @@ If PyLy can't find ffmpeg anywhere, it will tell you clearly rather than fail si
 | `--keep-as-primary` | `-k` | Use fetched synced lyrics as the output; skip Whisper if available |
 | `--keep-as-alternate` | `-K` | Save fetched synced lyrics as `.fetched.lrc`; still generate Whisper output |
 | `--redownload` | `-R` | Re-fetch lyrics from the URL saved in existing `.lrc` files. Requires `--overwrite` to write |
-| `--list-providers` | | Print available lyric providers and exit |
+| `--list-providers` | `-p` | Print available lyric providers and exit |
+| `--find-better` | `-F` | Only process audio files whose existing `.lrc` was Whisper-transcribed (no external URL tag). Useful with `--fetch` to upgrade Whisper-only files |
 | `--base <file>` | `-b` | Plain text lyrics file to use as a reference |
 | `--lyrics <file>` | | Alias for `--base` |
 | `--truth` | `-u` | Trust the lyrics reference enough to replace garbled Whisper sections |
