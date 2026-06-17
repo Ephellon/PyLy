@@ -95,7 +95,10 @@ def _run_ffprobe(audio_path: Path) -> dict:
       str(audio_path),
    ]
    try:
-      proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+      proc = subprocess.run(
+         cmd, capture_output=True, text=True,
+         encoding="utf-8", errors="replace", check=False,
+      )
    except Exception:
       return {}
    if proc.returncode != 0:

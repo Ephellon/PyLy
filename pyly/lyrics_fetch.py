@@ -683,7 +683,10 @@ def get_audio_duration_s(audio_path: Path) -> float | None:
       str(audio_path),
    ]
    try:
-      proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=10)
+      proc = subprocess.run(
+         cmd, capture_output=True, text=True,
+         encoding="utf-8", errors="replace", check=False, timeout=10,
+      )
       data = json.loads(proc.stdout or "{}")
       dur = (data.get("format") or {}).get("duration")
       if dur is not None:

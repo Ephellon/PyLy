@@ -86,7 +86,10 @@ def read_embedded_tags(audio_path: Path) -> dict[str, str]:
       str(audio_path),
    ]
    try:
-      proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=15)
+      proc = subprocess.run(
+         cmd, capture_output=True, text=True,
+         encoding="utf-8", errors="replace", check=False, timeout=15,
+      )
       data = json.loads(proc.stdout or "{}")
    except Exception:
       return {}
@@ -548,7 +551,10 @@ def write_tags(
    ]
 
    try:
-      proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=120)
+      proc = subprocess.run(
+         cmd, capture_output=True, text=True,
+         encoding="utf-8", errors="replace", check=False, timeout=120,
+      )
       if proc.returncode != 0 or not tmp.exists():
          _cleanup(tmp)
          err = (proc.stderr or "").strip().splitlines()
