@@ -514,6 +514,7 @@ def _run_file_metadata(ns, write_mode: str | None) -> int:
       expected_metadata,
       compare_metadata,
       find_album_nfo,
+      find_artist_nfo,
       has_problems,
       write_tags,
    )
@@ -538,9 +539,10 @@ def _run_file_metadata(ns, write_mode: str | None) -> int:
 
    for audio in inputs:
       try:
-         nfo = find_album_nfo(audio)
+         album_nfo = find_album_nfo(audio)
+         artist_nfo = find_artist_nfo(audio)
          tags = read_embedded_tags(audio)
-         expected = expected_metadata(audio, ns.layout, nfo)
+         expected = expected_metadata(audio, ns.layout, album_nfo, artist_nfo)
          actual = actual_metadata(tags)
          diffs = compare_metadata(expected, actual)
 
@@ -550,7 +552,12 @@ def _run_file_metadata(ns, write_mode: str | None) -> int:
             continue
 
          problem_count += 1
-         nfo_note = f"  [album.nfo: {nfo.path.name}]" if nfo else "  [no album.nfo]"
+         sources = []
+         if album_nfo:
+            sources.append("album.nfo")
+         if artist_nfo:
+            sources.append("artist.nfo")
+         nfo_note = f"  [{', '.join(sources)}]" if sources else "  [no .nfo]"
          print(warn(f"{audio.name}{nfo_note}"))
          for d in diffs:
             if d.status == "mismatch":

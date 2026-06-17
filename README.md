@@ -261,9 +261,11 @@ pyly "X:\Music\2 Chainz\Based on a T.R.U. Story" --check-file-metadata
 
 For each file, PyLy compares the embedded **title, artist, album, year, and track** against what the file *should* contain and prints any mismatches. Nothing is written. PyLy works out the "correct" value in this order:
 
-1. **`album.nfo`** — if a Kodi/Plex-style `album.nfo` sits next to the files (or one folder up), its album title, artist, year, and per-track titles win.
-2. **Folder layout** — otherwise the artist/album/track come from the folder structure. Use `--layout lidarr|plex|flat` or a custom template to tell PyLy how your folders are arranged (same hint as `--fetch`).
+1. **`.nfo` files** — if a Kodi/Lidarr-style `album.nfo` sits next to the files (or one folder up), its album title, artist, year, and per-track titles win. An `artist.nfo` in the artist folder (the one above the albums, where Lidarr writes it) supplies the artist name and each album's year, which is handy when an `album.nfo` is missing or doesn't list an artist.
+2. **Folder layout** — otherwise the artist/album/track come from the folder structure. Use `--layout lidarr|plex|flat` or a custom template to tell PyLy how your folders are arranged (same hint as `--fetch`). When a `.nfo` is present, its own location is used to work out the structure, so this usually just works without a `--layout` flag.
 3. **Filename** — the track title falls back to the filename when the layout is `flat` or doesn't carry enough information.
+
+PyLy reads `.nfo` files leniently: the `<?xml?>` header is optional, XML entities and nested credits are handled, and malformed-but-common files (e.g. a stray `<rating: max=10>` tag) are still parsed. A `<artistdesc>`/`<biography>` block is treated as prose, never as the artist name.
 
 The exit code is non-zero when any mismatch remains, so `--check-file-metadata` is usable as a library health check in scripts.
 

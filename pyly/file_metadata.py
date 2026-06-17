@@ -6,10 +6,15 @@ Two responsibilities, both standalone modes (no Whisper involved):
 * check  (--check-file-metadata / -z)
     Read the audio file's embedded tags and compare them against what the
     file *should* contain, deriving the expected values from (in priority):
-        1. an accompanying ``album.nfo`` (Kodi/Plex style)
+        1. an accompanying ``album.nfo`` / ``artist.nfo`` (Kodi/Lidarr style)
         2. the folder layout / ``--layout`` hint
         3. the filename (used when the layout is ``flat`` or yields nothing)
     Mismatches are reported; nothing is written.
+
+NFO files are parsed with a tolerant regex extractor rather than a strict XML
+parser: real-world Kodi/Lidarr NFOs are frequently not well-formed XML (e.g.
+``<rating: max=10>8</rating>``), the ``<?xml?>`` header is optional, and the
+schemas are flat enough that regex extraction is reliable.
 
 * match  (--match-file-metadata / -Z)
     Same comparison, but the expected values are written back into the audio
@@ -24,13 +29,13 @@ binaries under ``ff/`` when not found on PATH, mirroring the rest of PyLy.
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
 import shutil
 import subprocess
 import unicodedata
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -123,6 +128,13 @@ class NfoTrack:
    title: str
 
 
+@dataclass(frozen=True)
+class NfoAlbumRef:
+   """An <album> entry as listed inside an artist.nfo (title + year only)."""
+   title: str
+   year: str
+
+
 @dataclass
 class AlbumNfo:
    path: Path
@@ -145,13 +157,26 @@ class AlbumNfo:
       return None
 
 
+@dataclass
+class ArtistNfo:
+   path: Path
+   name: str = ""
+   albums: list[NfoAlbumRef] = field(default_factory=list)
+
+   def year_for(self, album_title: str) -> str:
+      """Year of the listed album whose title matches ``album_title``."""
+      if not album_title:
+         return ""
+      target = _norm(album_title)
+      for ref in self.albums:
+         if ref.title and _norm(ref.title) == target:
+            return ref.year
+      return ""
+
+
 def find_album_nfo(audio_path: Path) -> AlbumNfo | None:
    """Look for an ``album.nfo`` in the file's folder, then its parent folder."""
-   seen: set[Path] = set()
-   for folder in (audio_path.parent, audio_path.parent.parent):
-      if not folder or folder in seen:
-         continue
-      seen.add(folder)
+   for folder in _ancestor_dirs(audio_path, depth=2):
       candidate = folder / "album.nfo"
       if candidate.is_file():
          parsed = parse_album_nfo(candidate)
@@ -160,32 +185,62 @@ def find_album_nfo(audio_path: Path) -> AlbumNfo | None:
    return None
 
 
+def find_artist_nfo(audio_path: Path) -> ArtistNfo | None:
+   """
+   Look for an ``artist.nfo``, which Lidarr writes in the artist folder
+   (above the album folders). Walk a few levels up from the track.
+   """
+   for folder in _ancestor_dirs(audio_path, depth=3):
+      candidate = folder / "artist.nfo"
+      if candidate.is_file():
+         parsed = parse_artist_nfo(candidate)
+         if parsed:
+            return parsed
+   return None
+
+
+def _ancestor_dirs(audio_path: Path, depth: int) -> list[Path]:
+   """The file's folder and up to ``depth`` ancestors, de-duplicated, in order."""
+   dirs: list[Path] = []
+   folder = audio_path.parent
+   for _ in range(depth + 1):
+      if folder and folder not in dirs:
+         dirs.append(folder)
+      parent = folder.parent
+      if parent == folder:
+         break
+      folder = parent
+   return dirs
+
+
 def parse_album_nfo(nfo_path: Path) -> AlbumNfo | None:
-   """Parse a Kodi/Plex-style ``album.nfo``. Tolerant of missing fields."""
-   try:
-      text = nfo_path.read_text(encoding="utf-8", errors="replace")
-      root = ET.fromstring(text)
-   except Exception:
+   """
+   Parse a Kodi/Lidarr ``album.nfo`` with a tolerant regex extractor.
+
+   Handles invalid XML, an optional ``<?xml?>`` header, XML entities, and
+   nested ``<albumArtistCredits><artist>``.  Returns None only when the file
+   cannot be read.
+   """
+   text = _read_text(nfo_path)
+   if text is None:
       return None
 
-   # The <album> element may be the root or nested somewhere inside.
-   album_el = root if root.tag.lower() == "album" else root.find(".//album")
-   if album_el is None:
-      album_el = root
-
-   album_title = _nfo_text(album_el, "title")
-   # NB: <artistdesc> is a free-text biography, not an artist name — never use it.
-   album_artist = (
-      _nfo_artist(album_el, "albumartist")
-      or _nfo_artist(album_el, "artist")
-   )
-   year = _nfo_year(album_el)
-
+   # Pull out the <track> blocks first, then strip them so album-level field
+   # lookups (title/artist/year) never pick up a track's <title>.
    tracks: list[NfoTrack] = []
-   for track_el in album_el.findall("track"):
-      pos_raw = _nfo_text(track_el, "position") or _nfo_text(track_el, "track")
-      title = _nfo_text(track_el, "title")
-      tracks.append(NfoTrack(position=_safe_int(pos_raw), title=title))
+   for block in _nfo_blocks("track", text):
+      pos_raw = _nfo_first("position", block) or _nfo_first("track", block)
+      title = _nfo_first("title", block)
+      if title or pos_raw:
+         tracks.append(NfoTrack(position=_safe_int(pos_raw), title=title))
+
+   album_level = re.sub(r"<track\b[^>]*>.*?</track>", "", text, flags=re.IGNORECASE | re.DOTALL)
+
+   album_title = _nfo_first("title", album_level)
+   # The \b after "artist" means <artistdesc> (a biography) is never matched,
+   # while top-level <artist> and the one in <albumArtistCredits> both are.
+   album_artist = _nfo_first("albumartist", album_level) or _nfo_first("artist", album_level)
+   year = _nfo_year(album_level)
 
    return AlbumNfo(
       path=nfo_path,
@@ -196,29 +251,50 @@ def parse_album_nfo(nfo_path: Path) -> AlbumNfo | None:
    )
 
 
-def _nfo_text(parent: ET.Element, tag: str) -> str:
-   el = parent.find(tag)
-   if el is None or el.text is None:
+def parse_artist_nfo(nfo_path: Path) -> ArtistNfo | None:
+   """Parse a Lidarr ``artist.nfo``: the <name> and its listed <album> entries."""
+   text = _read_text(nfo_path)
+   if text is None:
+      return None
+
+   name = _nfo_first("name", text)
+   albums: list[NfoAlbumRef] = []
+   for block in _nfo_blocks("album", text):
+      title = _nfo_first("title", block)
+      year = _nfo_year(block)
+      if title:
+         albums.append(NfoAlbumRef(title=title, year=year))
+
+   return ArtistNfo(path=nfo_path, name=name, albums=albums)
+
+
+def _read_text(path: Path) -> str | None:
+   try:
+      return path.read_text(encoding="utf-8", errors="replace")
+   except Exception:
+      return None
+
+
+def _nfo_first(tag: str, text: str) -> str:
+   """First ``<tag>...</tag>`` inner value, entity-decoded and trimmed."""
+   m = re.search(rf"<{tag}\b[^>]*>(.*?)</{tag}>", text, flags=re.IGNORECASE | re.DOTALL)
+   return _nfo_clean(m.group(1)) if m else ""
+
+
+def _nfo_blocks(tag: str, text: str) -> list[str]:
+   """Inner contents of every ``<tag>...</tag>`` occurrence."""
+   return re.findall(rf"<{tag}\b[^>]*>(.*?)</{tag}>", text, flags=re.IGNORECASE | re.DOTALL)
+
+
+def _nfo_clean(value: str) -> str:
+   if not value:
       return ""
-   return unicodedata.normalize("NFC", el.text).strip()
+   return html.unescape(unicodedata.normalize("NFC", value)).strip()
 
 
-def _nfo_artist(parent: ET.Element, tag: str) -> str:
-   """Read an artist field that may be plain text or a nested <name> element."""
-   el = parent.find(tag)
-   if el is None:
-      return ""
-   if el.text and el.text.strip():
-      return unicodedata.normalize("NFC", el.text).strip()
-   name = el.find("name")
-   if name is not None and name.text:
-      return unicodedata.normalize("NFC", name.text).strip()
-   return ""
-
-
-def _nfo_year(parent: ET.Element) -> str:
+def _nfo_year(scope: str) -> str:
    for tag in ("year", "releasedate", "originalreleasedate", "date"):
-      raw = _nfo_text(parent, tag)
+      raw = _nfo_first(tag, scope)
       if raw:
          m = _YEAR_RX.search(raw)
          if m:
@@ -233,56 +309,59 @@ def _nfo_year(parent: ET.Element) -> str:
 def expected_metadata(
    audio_path: Path,
    layout: str | None,
-   nfo: AlbumNfo | None,
+   album_nfo: AlbumNfo | None,
+   artist_nfo: ArtistNfo | None = None,
 ) -> dict[str, str]:
    """
    Derive the values the file *should* carry.
 
-   Priority per field: album.nfo, then folder/layout, then filename.  The
-   folder->filename fallback is already baked into ``infer_path_guess``
-   (the title comes from the filename, artist/album from the folder unless
-   the layout is ``flat``).
+   Priority per field: the .nfo files, then folder/layout, then filename.  The
+   folder->filename fallback is already baked into ``infer_path_guess`` (title
+   from the filename, artist/album from the folder unless the layout is flat).
 
-   When an album.nfo is present it pins down the structure even if it omits
-   some fields: the folder holding album.nfo *is* the album folder, so its
-   name is the album and the folder above it is the artist.  That is far more
+   The .nfo files also pin down the folder *structure* even when they omit a
+   field: the folder holding album.nfo is the album folder and the one above
+   it is the artist; artist.nfo lives in the artist folder.  That is far more
    reliable than the generic path guess, which can't tell an Artist/Album/Track
    tree from an Artist/Track one without a --layout hint.  An explicit --layout
    still wins over this folder inference.
    """
    guess = infer_path_guess(audio_path, layout)
-   nfo_track = nfo.track_for(guess.track_number, guess.title) if nfo else None
+   nfo_track = album_nfo.track_for(guess.track_number, guess.title) if album_nfo else None
 
-   # Folder-structure values implied by the album.nfo location.
-   nfo_album = ""
-   nfo_dir_artist = ""
-   if nfo is not None:
-      album_dir = nfo.path.parent
-      nfo_album = album_dir.name
-      if album_dir.parent and album_dir.parent != album_dir:
-         nfo_dir_artist = album_dir.parent.name
+   album_dir, artist_dir = _structure_dirs(audio_path, album_nfo, artist_nfo)
+   struct_album = album_dir.name if album_dir else ""
+   struct_artist = artist_dir.name if artist_dir else ""
 
    layout_given = bool((layout or "").strip())
 
+   # TITLE: album.nfo track title -> layout/folder guess -> filename
    title = (nfo_track.title if nfo_track else "") or guess.title or _clean_title(audio_path.stem)
 
-   # album.nfo's own field -> explicit layout -> the album.nfo folder name
-   if nfo is not None and nfo.album_title:
-      album = nfo.album_title
+   # ALBUM: album.nfo title -> explicit layout -> album folder name
+   if album_nfo and album_nfo.album_title:
+      album = album_nfo.album_title
    elif layout_given and guess.album:
       album = guess.album
    else:
-      album = nfo_album or guess.album
+      album = struct_album or guess.album
 
-   # album.nfo's own field -> explicit layout -> the folder above album.nfo
-   if nfo is not None and nfo.album_artist:
-      artist = nfo.album_artist
+   # ARTIST: album.nfo artist -> artist.nfo name -> explicit layout -> artist folder
+   if album_nfo and album_nfo.album_artist:
+      artist = album_nfo.album_artist
+   elif artist_nfo and artist_nfo.name:
+      artist = artist_nfo.name
    elif layout_given and guess.artist:
       artist = guess.artist
    else:
-      artist = nfo_dir_artist or guess.artist
+      artist = struct_artist or guess.artist
 
-   year = (nfo.year if nfo else "") or guess.year
+   # YEAR: album.nfo year -> artist.nfo's listing for this album -> guess
+   year = album_nfo.year if (album_nfo and album_nfo.year) else ""
+   if not year and artist_nfo:
+      year = artist_nfo.year_for(album) or artist_nfo.year_for(struct_album)
+   if not year:
+      year = guess.year
 
    track_num = guess.track_number
    if track_num is None and nfo_track is not None:
@@ -295,6 +374,33 @@ def expected_metadata(
       "year": year or "",
       "track": str(track_num) if track_num is not None else "",
    }
+
+
+def _structure_dirs(
+   audio_path: Path,
+   album_nfo: AlbumNfo | None,
+   artist_nfo: ArtistNfo | None,
+) -> tuple[Path | None, Path | None]:
+   """
+   Resolve the album and artist folders from whichever .nfo we have.
+
+   With album.nfo: its folder is the album, the folder above is the artist.
+   With only artist.nfo: its folder is the artist, and the album folder is the
+   child of it that lies on the path down to the track.
+   """
+   if album_nfo is not None:
+      album_dir = album_nfo.path.parent
+      parent = album_dir.parent
+      return album_dir, (parent if parent != album_dir else None)
+
+   if artist_nfo is not None:
+      artist_dir = artist_nfo.path.parent
+      for ancestor in audio_path.parents:
+         if ancestor.parent == artist_dir:
+            return ancestor, artist_dir
+      return None, artist_dir
+
+   return None, None
 
 
 @dataclass(frozen=True)
