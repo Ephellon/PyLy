@@ -174,10 +174,10 @@ def parse_album_nfo(nfo_path: Path) -> AlbumNfo | None:
       album_el = root
 
    album_title = _nfo_text(album_el, "title")
+   # NB: <artistdesc> is a free-text biography, not an artist name — never use it.
    album_artist = (
       _nfo_artist(album_el, "albumartist")
       or _nfo_artist(album_el, "artist")
-      or _nfo_artist(album_el, "artistdesc")
    )
    year = _nfo_year(album_el)
 
@@ -242,13 +242,46 @@ def expected_metadata(
    folder->filename fallback is already baked into ``infer_path_guess``
    (the title comes from the filename, artist/album from the folder unless
    the layout is ``flat``).
+
+   When an album.nfo is present it pins down the structure even if it omits
+   some fields: the folder holding album.nfo *is* the album folder, so its
+   name is the album and the folder above it is the artist.  That is far more
+   reliable than the generic path guess, which can't tell an Artist/Album/Track
+   tree from an Artist/Track one without a --layout hint.  An explicit --layout
+   still wins over this folder inference.
    """
    guess = infer_path_guess(audio_path, layout)
    nfo_track = nfo.track_for(guess.track_number, guess.title) if nfo else None
 
+   # Folder-structure values implied by the album.nfo location.
+   nfo_album = ""
+   nfo_dir_artist = ""
+   if nfo is not None:
+      album_dir = nfo.path.parent
+      nfo_album = album_dir.name
+      if album_dir.parent and album_dir.parent != album_dir:
+         nfo_dir_artist = album_dir.parent.name
+
+   layout_given = bool((layout or "").strip())
+
    title = (nfo_track.title if nfo_track else "") or guess.title or _clean_title(audio_path.stem)
-   album = (nfo.album_title if nfo else "") or guess.album
-   artist = (nfo.album_artist if nfo else "") or guess.artist
+
+   # album.nfo's own field -> explicit layout -> the album.nfo folder name
+   if nfo is not None and nfo.album_title:
+      album = nfo.album_title
+   elif layout_given and guess.album:
+      album = guess.album
+   else:
+      album = nfo_album or guess.album
+
+   # album.nfo's own field -> explicit layout -> the folder above album.nfo
+   if nfo is not None and nfo.album_artist:
+      artist = nfo.album_artist
+   elif layout_given and guess.artist:
+      artist = guess.artist
+   else:
+      artist = nfo_dir_artist or guess.artist
+
    year = (nfo.year if nfo else "") or guess.year
 
    track_num = guess.track_number
