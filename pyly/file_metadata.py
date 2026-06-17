@@ -382,6 +382,21 @@ def expected_metadata(
    }
 
 
+def layout_metadata(audio_path: Path, layout: str | None) -> dict[str, str]:
+   """
+   The expected values derived purely from the folder layout / filename,
+   ignoring any .nfo. Used as the alternate candidate in ``loose`` mode.
+   """
+   g = infer_path_guess(audio_path, layout)
+   return {
+      "title": g.title or _clean_title(audio_path.stem),
+      "artist": g.artist or "",
+      "album": g.album or "",
+      "year": g.year or "",
+      "track": str(g.track_number) if g.track_number is not None else "",
+   }
+
+
 def _structure_dirs(
    audio_path: Path,
    album_nfo: AlbumNfo | None,
@@ -417,16 +432,43 @@ class FieldDiff:
    status: str  # "ok" | "mismatch" | "missing" | "unknown"
 
 
-def compare_metadata(expected: dict[str, str], actual: dict[str, str]) -> list[FieldDiff]:
+def compare_metadata(
+   expected: dict[str, str],
+   actual: dict[str, str],
+   layout_expected: dict[str, str] | None = None,
+   mode: str = "strict",
+) -> list[FieldDiff]:
+   """
+   Compare embedded tags against the expected values.
+
+   strict (default)
+       Each field must match the primary expected value (.nfo first, then
+       layout, then filename).
+   loose
+       A field is OK if the tag matches the primary expected value *or* the
+       layout/filename value, and trailing "(...)"/"[...]" qualifiers (e.g.
+       "(Digital Media 01)") are ignored.
+   """
+   loose = mode == "loose"
    diffs: list[FieldDiff] = []
    for f in CHECK_FIELDS:
       exp = (expected.get(f) or "").strip()
       act = (actual.get(f) or "").strip()
-      if not exp:
+
+      candidates = [exp]
+      if loose and layout_expected:
+         alt = (layout_expected.get(f) or "").strip()
+         if alt:
+            candidates.append(alt)
+      nonempty = [c for c in candidates if c]
+
+      if not nonempty:
          status = "unknown"          # nothing reliable to compare against
       elif not act:
          status = "missing"          # file has no value for a field we know
-      elif _field_eq(f, exp, act):
+      elif loose and any(_field_eq_loose(f, c, act) for c in nonempty):
+         status = "ok"
+      elif not loose and _field_eq(f, exp, act):
          status = "ok"
       else:
          status = "mismatch"
@@ -571,6 +613,16 @@ def _repair_mojibake(value: str) -> str:
    return unicodedata.normalize("NFC", current)
 
 
+# Characters Windows forbids in filenames. A title carrying one of these can
+# never survive into the filename verbatim, so we treat them as whitespace when
+# comparing — otherwise "Cameras / Good Ones" (tag) always "mismatches" the
+# sanitized filename "Cameras  Good Ones".
+_PATH_ILLEGAL = str.maketrans({c: " " for c in '<>:"/\\|?*'})
+
+# Trailing "(...)" / "[...]" qualifier groups, e.g. " (Digital Media 01)".
+_TRAILING_QUALIFIER_RX = re.compile(r"[\s]*[\(\[][^\)\]]*[\)\]]\s*$")
+
+
 def _norm(value: str) -> str:
    if not value:
       return ""
@@ -580,8 +632,19 @@ def _norm(value: str) -> str:
        .replace("“", '"').replace("”", '"')
        .replace("–", "-").replace("—", "-")
    )
+   s = s.translate(_PATH_ILLEGAL)
    s = " ".join(s.split())
    return s.casefold()
+
+
+def _strip_trailing_qualifiers(value: str) -> str:
+   """Drop trailing parenthetical/bracketed groups: 'X (Digital Media 01)' -> 'X'."""
+   prev = None
+   s = value or ""
+   while s != prev:
+      prev = s
+      s = _TRAILING_QUALIFIER_RX.sub("", s).strip()
+   return s
 
 
 def _field_eq(field_name: str, expected: str, actual: str) -> bool:
@@ -590,6 +653,15 @@ def _field_eq(field_name: str, expected: str, actual: str) -> bool:
    if field_name == "track":
       return _extract_track(expected) == _extract_track(actual)
    return _norm(expected) == _norm(actual)
+
+
+def _field_eq_loose(field_name: str, candidate: str, actual: str) -> bool:
+   """Looser equality: also matches when trailing qualifiers are ignored."""
+   if _field_eq(field_name, candidate, actual):
+      return True
+   if field_name in ("title", "album", "artist"):
+      return _norm(_strip_trailing_qualifiers(candidate)) == _norm(_strip_trailing_qualifiers(actual))
+   return False
 
 
 def _extract_year(value: str) -> str:

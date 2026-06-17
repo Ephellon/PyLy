@@ -203,11 +203,14 @@ def main(argv: list[str] | None = None) -> int:
 
    # File metadata check / match (standalone modes; no Whisper)
    ap.add_argument(
-      "--check-file-metadata", "-z", action="store_true", default=False,
+      "--check-file-metadata", "-z", nargs="?", const="strict", default=None,
+      choices=["strict", "loose"], metavar="MODE",
       help=(
          "Check that each audio file's embedded tags (title, artist, album, year, track) "
-         "match what the file should contain — derived from album.nfo, then the folder "
-         "layout, then the filename. Reports mismatches; writes nothing."
+         "match what the file should contain — derived from album.nfo/artist.nfo, then the "
+         "folder layout, then the filename. Reports mismatches; writes nothing. "
+         "MODE: strict (default — must match the .nfo field) or loose (may match the .nfo "
+         "or the folder layout, and ignores trailing '(...)' qualifiers like '(Digital Media 01)')."
       ),
    )
    ap.add_argument(
@@ -217,7 +220,8 @@ def main(argv: list[str] | None = None) -> int:
          "Fix mismatched tags by writing the expected values (sourced from album.nfo, then "
          "layout, then filename) into the audio file via ffmpeg. MODE is one of: "
          "backup (default — copy original to <file>.bak first), direct (in place, no backup), "
-         "copy (leave original, write <stem>.tagged.<ext>)."
+         "copy (leave original, write <stem>.tagged.<ext>). Comparison strictness is strict "
+         "by default; combine with '-z loose' to fix under loose matching."
       ),
    )
 
@@ -259,9 +263,10 @@ def main(argv: list[str] | None = None) -> int:
       if mode not in {"backup", "direct", "copy"}:
          print(f"[X] --match-file-metadata MODE must be backup, direct, or copy (got {mode!r}).", file=sys.stderr)
          return 2
-      return _run_file_metadata(ns, write_mode=mode)
+      strictness = ns.check_file_metadata or "strict"
+      return _run_file_metadata(ns, write_mode=mode, strictness=strictness)
    if ns.check_file_metadata:
-      return _run_file_metadata(ns, write_mode=None)
+      return _run_file_metadata(ns, write_mode=None, strictness=ns.check_file_metadata)
 
    # ------------------------------------------------------------------
    # --redownload mode: work directly from .lrc files (or audio files)
@@ -499,19 +504,21 @@ def _run_redownload(ns) -> int:
    return 0 if fail_count == 0 else 1
 
 
-def _run_file_metadata(ns, write_mode: str | None) -> int:
+def _run_file_metadata(ns, write_mode: str | None, strictness: str = "strict") -> int:
    """
    Handle --check-file-metadata (write_mode=None) and
    --match-file-metadata (write_mode in {backup, direct, copy}).
 
    Reads each audio file's embedded tags, derives the expected values from
-   album.nfo -> folder layout -> filename, and either reports mismatches
-   (check) or writes corrections via ffmpeg (match).
+   album.nfo/artist.nfo -> folder layout -> filename, and either reports
+   mismatches (check) or writes corrections via ffmpeg (match). ``strictness``
+   is strict or loose (see compare_metadata).
    """
    from .file_metadata import (
       read_embedded_tags,
       actual_metadata,
       expected_metadata,
+      layout_metadata,
       compare_metadata,
       find_album_nfo,
       find_artist_nfo,
@@ -530,7 +537,7 @@ def _run_file_metadata(ns, write_mode: str | None) -> int:
       return 1
 
    action = f"--match-file-metadata ({write_mode})" if write_mode else "--check-file-metadata"
-   banner(f"PyLy {action} — {len(inputs)} file(s)")
+   banner(f"PyLy {action} [{strictness}] — {len(inputs)} file(s)")
 
    clean_count = 0      # files whose tags already match
    problem_count = 0    # files with at least one mismatch/missing
@@ -544,7 +551,8 @@ def _run_file_metadata(ns, write_mode: str | None) -> int:
          tags = read_embedded_tags(audio)
          expected = expected_metadata(audio, ns.layout, album_nfo, artist_nfo)
          actual = actual_metadata(tags)
-         diffs = compare_metadata(expected, actual)
+         layout_exp = layout_metadata(audio, ns.layout)
+         diffs = compare_metadata(expected, actual, layout_exp, mode=strictness)
 
          if not has_problems(diffs):
             clean_count += 1

@@ -265,7 +265,21 @@ For each file, PyLy compares the embedded **title, artist, album, year, and trac
 2. **Folder layout** — otherwise the artist/album/track come from the folder structure. Use `--layout lidarr|plex|flat` or a custom template to tell PyLy how your folders are arranged (same hint as `--fetch`). When a `.nfo` is present, its own location is used to work out the structure, so this usually just works without a `--layout` flag.
 3. **Filename** — the track title falls back to the filename when the layout is `flat` or doesn't carry enough information.
 
-PyLy reads `.nfo` files leniently: the `<?xml?>` header is optional, XML entities and nested credits are handled, and malformed-but-common files (e.g. a stray `<rating: max=10>` tag) are still parsed. A `<artistdesc>`/`<biography>` block is treated as prose, never as the artist name.
+PyLy reads `.nfo` files leniently: the `<?xml?>` header is optional, XML entities and nested credits are handled, and malformed-but-common files (e.g. a stray `<rating: max=10>` tag) are still parsed. A `<artistdesc>`/`<biography>` block is treated as prose, never as the artist name. Mojibake in a tag (e.g. `Iâ€™m` for `I'm`, a common encoding accident) and characters a filename can't contain (`/ \ : * ? " < > |`) are normalised away, so they don't show up as phantom mismatches.
+
+**Strict vs loose.** The check takes an optional mode:
+
+```
+pyly "...\album" --check-file-metadata          # strict (default)
+pyly "...\album" --check-file-metadata loose
+```
+
+| Mode | Meaning |
+|---|---|
+| `strict` *(default)* | The tag **must** match the `.nfo` field. |
+| `loose` | The tag **may** match the `.nfo` field **or** the folder layout, and trailing `(...)`/`[...]` qualifiers like `(Digital Media 01)`, `(Remastered)` or `(Live)` are ignored. |
+
+`loose` is handy when your `.nfo` files carry MusicBrainz medium/edition suffixes you don't keep in your tags. To fix under loose matching, combine the two flags: `pyly "...\album" -z loose -Z`. On its own, `-Z` uses strict matching.
 
 The exit code is non-zero when any mismatch remains, so `--check-file-metadata` is usable as a library health check in scripts.
 
@@ -435,7 +449,7 @@ If PyLy can't find ffmpeg anywhere, it will tell you clearly rather than fail si
 | `--redownload` | `-R` | Re-fetch lyrics from the URL saved in existing `.lrc` files. Requires `--overwrite` to write |
 | `--list-providers` | `-p` | Print available lyric providers and exit |
 | `--find-better` | `-F` | Only process audio files whose existing `.lrc` was Whisper-transcribed (no external URL tag). Useful with `--fetch` to upgrade Whisper-only files |
-| `--check-file-metadata` | `-z` | Report files whose embedded tags (title, artist, album, year, track) don't match `album.nfo` / the folder layout / the filename. Read-only |
+| `--check-file-metadata [mode]` | `-z` | Report files whose embedded tags (title, artist, album, year, track) don't match `album.nfo`/`artist.nfo` / the folder layout / the filename. `mode`: `strict` (default) or `loose` (also accepts the folder layout and ignores trailing `(...)` qualifiers). Read-only |
 | `--match-file-metadata [mode]` | `-Z` | Fix mismatched tags by writing the expected values into the file. `mode`: `backup` (default, keeps a `.bak`), `direct`, or `copy`. The only flag that modifies your audio |
 | `--base <file>` | `-b` | Plain text lyrics file to use as a reference |
 | `--lyrics <file>` | | Alias for `--base` |
