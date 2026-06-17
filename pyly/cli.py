@@ -102,7 +102,25 @@ def _collect_lrc_inputs(
    return sorted(results)
 
 
+def _configure_stdio() -> None:
+   """
+   Force stdout/stderr to UTF-8 so PyLy's output (the ✓ glyphs, em dashes, and
+   Unicode characters in filenames) survives being redirected to a file or pipe.
+
+   When stdout is a real console this is already fine, but ``pyly ... > out.log``
+   makes Python encode with the locale codepage (cp1252 on Windows), which
+   raises UnicodeEncodeError on any non-cp1252 character. ``errors="replace"``
+   keeps us crash-proof even on genuinely unencodable bytes.
+   """
+   for stream in (sys.stdout, sys.stderr):
+      try:
+         stream.reconfigure(encoding="utf-8", errors="replace")
+      except Exception:
+         pass
+
+
 def main(argv: list[str] | None = None) -> int:
+   _configure_stdio()
    ap = argparse.ArgumentParser(prog="pyly", add_help=True)
    ap.add_argument("path", nargs="?", default=None, help="Audio file, .lrc file (for --redownload), or folder")
    ap.add_argument("--recursive", "-r", action="store_true", help="Recurse when path is a folder")
