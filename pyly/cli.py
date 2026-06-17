@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 from .pipeline import run_pipeline
-from .console_ui import LiveStatus, banner, ok, err, warn, RollingETA, format_duration, set_color_enabled
+from .console_ui import LiveStatus, banner, ok, err, warn, info, RollingETA, format_duration, set_color_enabled
 
 
 AUDIO_EXTS = {
@@ -201,6 +201,26 @@ def main(argv: list[str] | None = None) -> int:
       help="Print all available lyric providers and exit.",
    )
 
+   # File metadata check / match (standalone modes; no Whisper)
+   ap.add_argument(
+      "--check-file-metadata", "-z", action="store_true", default=False,
+      help=(
+         "Check that each audio file's embedded tags (title, artist, album, year, track) "
+         "match what the file should contain — derived from album.nfo, then the folder "
+         "layout, then the filename. Reports mismatches; writes nothing."
+      ),
+   )
+   ap.add_argument(
+      "--match-file-metadata", "-Z", nargs="?", const="backup", default=None,
+      metavar="MODE",
+      help=(
+         "Fix mismatched tags by writing the expected values (sourced from album.nfo, then "
+         "layout, then filename) into the audio file via ffmpeg. MODE is one of: "
+         "backup (default — copy original to <file>.bak first), direct (in place, no backup), "
+         "copy (leave original, write <stem>.tagged.<ext>)."
+      ),
+   )
+
    ns = ap.parse_args(argv)
    set_color_enabled(ns.color)
 
@@ -230,6 +250,18 @@ def main(argv: list[str] | None = None) -> int:
 
    if (ns.keep_as_primary or ns.keep_as_alternate) and ns.fetch is None:
       ns.fetch = ""
+
+   # ------------------------------------------------------------------
+   # --check-file-metadata / --match-file-metadata: standalone tag modes
+   # ------------------------------------------------------------------
+   if ns.match_file_metadata is not None:
+      mode = ns.match_file_metadata.strip().lower()
+      if mode not in {"backup", "direct", "copy"}:
+         print(f"[X] --match-file-metadata MODE must be backup, direct, or copy (got {mode!r}).", file=sys.stderr)
+         return 2
+      return _run_file_metadata(ns, write_mode=mode)
+   if ns.check_file_metadata:
+      return _run_file_metadata(ns, write_mode=None)
 
    # ------------------------------------------------------------------
    # --redownload mode: work directly from .lrc files (or audio files)
@@ -465,6 +497,95 @@ def _run_redownload(ns) -> int:
    else:
       banner(f"{ok_count} - UPDATED / {skip_count} - SKIPPED / {fail_count} - FAIL")
    return 0 if fail_count == 0 else 1
+
+
+def _run_file_metadata(ns, write_mode: str | None) -> int:
+   """
+   Handle --check-file-metadata (write_mode=None) and
+   --match-file-metadata (write_mode in {backup, direct, copy}).
+
+   Reads each audio file's embedded tags, derives the expected values from
+   album.nfo -> folder layout -> filename, and either reports mismatches
+   (check) or writes corrections via ffmpeg (match).
+   """
+   from .file_metadata import (
+      read_embedded_tags,
+      actual_metadata,
+      expected_metadata,
+      compare_metadata,
+      find_album_nfo,
+      has_problems,
+      write_tags,
+   )
+
+   try:
+      inputs = _collect_inputs([ns.path], ns.recursive)
+   except Exception as e:
+      print(f"[X] {e}", file=sys.stderr)
+      return 2
+
+   if not inputs:
+      print("[!] No supported audio files found.", file=sys.stderr)
+      return 1
+
+   action = f"--match-file-metadata ({write_mode})" if write_mode else "--check-file-metadata"
+   banner(f"PyLy {action} — {len(inputs)} file(s)")
+
+   clean_count = 0      # files whose tags already match
+   problem_count = 0    # files with at least one mismatch/missing
+   fixed_count = 0      # files actually written (match mode)
+   fail_count = 0
+
+   for audio in inputs:
+      try:
+         nfo = find_album_nfo(audio)
+         tags = read_embedded_tags(audio)
+         expected = expected_metadata(audio, ns.layout, nfo)
+         actual = actual_metadata(tags)
+         diffs = compare_metadata(expected, actual)
+
+         if not has_problems(diffs):
+            clean_count += 1
+            print(ok(f"{audio.name}  (tags match)"))
+            continue
+
+         problem_count += 1
+         nfo_note = f"  [album.nfo: {nfo.path.name}]" if nfo else "  [no album.nfo]"
+         print(warn(f"{audio.name}{nfo_note}"))
+         for d in diffs:
+            if d.status == "mismatch":
+               print(info(f"  {d.field}: tag={d.actual!r}  ->  expected {d.expected!r}"))
+            elif d.status == "missing":
+               print(info(f"  {d.field}: tag missing  ->  expected {d.expected!r}"))
+
+         if write_mode:
+            changed, message = write_tags(
+               audio, expected, diffs,
+               mode=write_mode, dry_run=ns.dry_run,
+            )
+            if changed:
+               fixed_count += 1
+               print(ok(f"  {message}"))
+            else:
+               print(info(f"  (skipped write: {message})"))
+
+      except Exception as e:
+         fail_count += 1
+         print(err(f"{audio.name}: {e}"))
+
+   if write_mode:
+      verb = "WOULD FIX" if ns.dry_run else "FIXED"
+      banner(
+         f"{clean_count} - OK / {problem_count} - MISMATCH / "
+         f"{fixed_count} - {verb} / {fail_count} - FAIL"
+      )
+   else:
+      banner(f"{clean_count} - OK / {problem_count} - MISMATCH / {fail_count} - FAIL")
+
+   # Non-zero exit when problems remain or anything failed, so this is usable
+   # as a check in scripts. In match mode, fixed files no longer count as bad.
+   unresolved = (problem_count - fixed_count) if write_mode else problem_count
+   return 0 if (unresolved == 0 and fail_count == 0) else 1
 
 
 if __name__ == "__main__":

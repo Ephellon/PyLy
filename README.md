@@ -4,7 +4,7 @@ PyLy listens to your music and writes the lyrics file for it — no account need
 
 It runs your audio through [Whisper](https://github.com/openai/whisper) (an offline speech-to-text model), cleans up the result, and saves a `.lrc` file next to your audio. Plex picks that file up automatically and shows lyrics in sync as the song plays.
 
-> **Your audio files are never touched.** PyLy only ever reads them.
+> **Your audio files are never touched.** PyLy only ever reads them — with one opt-in exception: `--match-file-metadata` (`-Z`) deliberately rewrites tags to fix them, and defaults to making a backup first. See [Checking and fixing file tags](#checking-and-fixing-file-tags).
 
 ---
 
@@ -20,6 +20,7 @@ It runs your audio through [Whisper](https://github.com/openai/whisper) (an offl
   * [Choosing a Whisper model](#choosing-a-whisper-model)
 * [Lyric providers](#lyric-providers)
 * [Re-downloading lyrics](#re-downloading-lyrics)
+* [Checking and fixing file tags](#checking-and-fixing-file-tags)
 * [Advanced: fine-tuning the lyrics alignment](#advanced-fine-tuning-the-lyrics-alignment)
 * [Advanced: fetch templates and folder layout hints](#advanced-fetch-templates-and-folder-layout-hints)
 * [Advanced: what goes inside a .lrc file](#advanced-what-goes-inside-a-lrc-file)
@@ -248,6 +249,51 @@ You can point this at a single `.lrc` file, a single audio file (PyLy will find 
 
 ---
 
+## Checking and fixing file tags
+
+Sometimes a track's embedded tags are simply wrong — a ripper or a careless edit leaves `02 No Lie.mp3` carrying the title *"Embassy Money"*. Lyrics only line up when the tags are right, so PyLy can audit them and, if you ask, fix them.
+
+**Check (read-only):**
+
+```
+pyly "X:\Music\2 Chainz\Based on a T.R.U. Story" --check-file-metadata
+```
+
+For each file, PyLy compares the embedded **title, artist, album, year, and track** against what the file *should* contain and prints any mismatches. Nothing is written. PyLy works out the "correct" value in this order:
+
+1. **`album.nfo`** — if a Kodi/Plex-style `album.nfo` sits next to the files (or one folder up), its album title, artist, year, and per-track titles win.
+2. **Folder layout** — otherwise the artist/album/track come from the folder structure. Use `--layout lidarr|plex|flat` or a custom template to tell PyLy how your folders are arranged (same hint as `--fetch`).
+3. **Filename** — the track title falls back to the filename when the layout is `flat` or doesn't carry enough information.
+
+The exit code is non-zero when any mismatch remains, so `--check-file-metadata` is usable as a library health check in scripts.
+
+**Fix (writes tags):**
+
+```
+# Default: write tags in place, but back up each original first
+pyly "X:\Music\2 Chainz\Based on a T.R.U. Story" --match-file-metadata
+
+# Preview without changing anything
+pyly "...\Based on a T.R.U. Story" --match-file-metadata --dry-run
+```
+
+`--match-file-metadata` (`-Z`) only rewrites the fields that are actually wrong, using the same `album.nfo → layout → filename` source order. It takes an optional mode:
+
+| Mode | What it does |
+|---|---|
+| `backup` *(default)* | Writes tags in place, after copying the original to `<file>.<ext>.bak` |
+| `direct` | Writes tags in place with no backup |
+| `copy` | Leaves the original untouched and writes a new `<name>.tagged.<ext>` |
+
+```
+pyly "...\album" --match-file-metadata direct    # no backup
+pyly "...\album" --match-file-metadata copy       # write alongside, keep original
+```
+
+> This is the **only** mode in which PyLy modifies your audio files. Tags are rewritten with `ffmpeg -c copy`, so the audio stream itself is never re-encoded.
+
+---
+
 ## Advanced: fine-tuning the lyrics alignment
 
 This section covers the controls that affect how PyLy matches a lyrics reference against Whisper's output. You probably won't need these unless the defaults aren't working well for a particular track.
@@ -387,6 +433,8 @@ If PyLy can't find ffmpeg anywhere, it will tell you clearly rather than fail si
 | `--redownload` | `-R` | Re-fetch lyrics from the URL saved in existing `.lrc` files. Requires `--overwrite` to write |
 | `--list-providers` | `-p` | Print available lyric providers and exit |
 | `--find-better` | `-F` | Only process audio files whose existing `.lrc` was Whisper-transcribed (no external URL tag). Useful with `--fetch` to upgrade Whisper-only files |
+| `--check-file-metadata` | `-z` | Report files whose embedded tags (title, artist, album, year, track) don't match `album.nfo` / the folder layout / the filename. Read-only |
+| `--match-file-metadata [mode]` | `-Z` | Fix mismatched tags by writing the expected values into the file. `mode`: `backup` (default, keeps a `.bak`), `direct`, or `copy`. The only flag that modifies your audio |
 | `--base <file>` | `-b` | Plain text lyrics file to use as a reference |
 | `--lyrics <file>` | | Alias for `--base` |
 | `--truth` | `-u` | Trust the lyrics reference enough to replace garbled Whisper sections |
