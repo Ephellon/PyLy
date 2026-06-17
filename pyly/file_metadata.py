@@ -108,11 +108,17 @@ def read_embedded_tags(audio_path: Path) -> dict[str, str]:
 
 
 def actual_metadata(tags: dict[str, str]) -> dict[str, str]:
-   """Project raw embedded tags onto the fields PyLy checks."""
+   """
+   Project raw embedded tags onto the fields PyLy checks.
+
+   Text fields are run through mojibake repair so a tag that merely stores
+   UTF-8 bytes mis-decoded as cp1252/latin-1 (e.g. ``Iâ€™m`` for ``I'm``)
+   compares equal to the clean expected value instead of looking wrong.
+   """
    return {
-      "title": tags.get("title", "") or "",
-      "artist": tags.get("artist", "") or tags.get("albumartist", "") or "",
-      "album": tags.get("album", "") or "",
+      "title": _repair_mojibake(tags.get("title", "") or ""),
+      "artist": _repair_mojibake(tags.get("artist", "") or tags.get("albumartist", "") or ""),
+      "album": _repair_mojibake(tags.get("album", "") or ""),
       "year": _extract_year(tags.get("date", "") or tags.get("year", "") or tags.get("originaldate", "")),
       "track": _extract_track(tags.get("track", "") or tags.get("tracknumber", "")),
    }
@@ -534,6 +540,36 @@ def _cleanup(path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
+
+def _repair_mojibake(value: str) -> str:
+   """
+   Undo UTF-8 text that was mis-decoded as cp1252/latin-1 (``â€™`` -> ``’``).
+
+   Applies the round-trip repeatedly so multiply-mangled tags (re-encoded more
+   than once) are fully cleaned. Each pass is only kept when it strictly
+   reduces the tell-tale ``â``/``Ã`` bytes, so genuine accented text is left
+   alone. Mirrors the lyric fetcher's repair.
+   """
+   if not value:
+      return value
+   current = value
+   for _ in range(4):  # bounded; real-world mojibake is rarely deeper than 2
+      if "â" not in current and "Ã" not in current:
+         break
+      improved = None
+      for enc in ("cp1252", "latin-1"):
+         try:
+            fixed = current.encode(enc).decode("utf-8")
+         except Exception:
+            continue
+         if (fixed.count("â") + fixed.count("Ã")) < (current.count("â") + current.count("Ã")):
+            improved = fixed
+            break
+      if improved is None:
+         break
+      current = improved
+   return unicodedata.normalize("NFC", current)
+
 
 def _norm(value: str) -> str:
    if not value:
