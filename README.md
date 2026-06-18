@@ -65,7 +65,7 @@ pip install -e .
 Or on Windows, just use `pyly.bat` — it will install PyLy automatically the first time and run your command:
 
 ```
-pyly.bat "X:\Music\Artist\Album\01 - Track.flac"
+pyly.bat "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac"
 ```
 
 Or on Linux systems, just use `pyly.sh` — it will install PyLy automatically the first time and run your command:
@@ -74,7 +74,7 @@ Or on Linux systems, just use `pyly.sh` — it will install PyLy automatically t
 # Make the file executable (once)
 sudo chmod +x pyly.sh
 # Run the program as intended
-pyly.sh "X:\Music\Artist\Album\01 - Track.flac"
+pyly.sh "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac"
 ```
 
 ---
@@ -84,15 +84,15 @@ pyly.sh "X:\Music\Artist\Album\01 - Track.flac"
 **One song:**
 
 ```
-pyly "X:\Music\Artist\Album\01 - Track.flac"
+pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac"
 ```
 
-PyLy will listen to the file, figure out the words, and save `01 - Track.lrc` in the same folder. That's it.
+PyLy will listen to the file, figure out the words, and save `11 Bohemian Rhapsody.lrc` in the same folder. That's it.
 
 **A whole album:**
 
 ```
-pyly "X:\Music\Artist\Album"
+pyly "X:\Music\Queen\A Night at the Opera"
 ```
 
 **Your entire music library:**
@@ -112,21 +112,21 @@ pyly "X:\Music" --recursive --overwrite
 **Want to keep things tidy?** Add `--clean` to delete the intermediate files PyLy creates along the way (they're only useful for debugging):
 
 ```
-pyly "X:\Music\Artist\Album\01 - Track.flac" --clean
+pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --clean
 ```
 
 ---
 
 ## What PyLy creates
 
-When you run PyLy on `01 - Track.flac`, you'll find these new files in the same folder:
+When you run PyLy on `11 Bohemian Rhapsody.flac`, you'll find these new files in the same folder:
 
 | File | What it is |
 |---|---|
-| `01 - Track.srt` | Raw transcript from Whisper |
-| `01 - Track.red.srt` | Same transcript, with noise and junk lines removed |
-| `01 - Track.lrc` | The final lyrics file — this is what Plex reads |
-| `01 - Track.pyly.log` | A log of what happened, only created if you pass `--log` |
+| `11 Bohemian Rhapsody.srt` | Raw transcript from Whisper |
+| `11 Bohemian Rhapsody.red.srt` | Same transcript, with noise and junk lines removed |
+| `11 Bohemian Rhapsody.lrc` | The final lyrics file — this is what Plex reads |
+| `11 Bohemian Rhapsody.pyly.log` | A log of what happened, only created if you pass `--log` |
 
 The `.srt` files are just intermediate steps. The only file you actually need is the `.lrc`. You can delete the others, or have PyLy do it for you with `--clean`.
 
@@ -143,22 +143,22 @@ Whisper is impressive, but it isn't perfect — especially on songs with heavy p
 The quickest way to get accurate lyrics is to let PyLy look them up online and use them as a reference. It still uses Whisper for the timing, but it replaces Whisper's guessed words with the correct ones wherever they match closely enough.
 
 ```
-pyly "X:\Music\Artist\Album\01 - Track.flac" --fetch
+pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch
 ```
 
 If you'd rather skip Whisper entirely and just use the online lyrics as-is (synced timestamps and all, if available), use `--keep-as-primary`:
 
 ```
-pyly "X:\Music\Artist\Album\01 - Track.flac" --keep-as-primary
+pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --keep-as-primary
 ```
 
 Or if you want both — the online synced lyrics saved as a separate file, and PyLy's Whisper version as the main one:
 
 ```
-pyly "X:\Music\Artist\Album\01 - Track.flac" --keep-as-alternate
+pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --keep-as-alternate
 ```
 
-This saves the fetched version as `01 - Track.fetched.lrc` and the Whisper version as the normal `01 - Track.lrc`.
+This saves the fetched version as `11 Bohemian Rhapsody.fetched.lrc` and the Whisper version as the normal `11 Bohemian Rhapsody.lrc`.
 
 Results are saved locally so PyLy won't re-fetch the same song twice.
 
@@ -167,7 +167,7 @@ Results are saved locally so PyLy won't re-fetch the same song twice.
 If you already have the correct lyrics for a song as a plain text file (just the words, no timestamps), you can hand them to PyLy directly:
 
 ```
-pyly "X:\Music\Artist\Album\01 - Track.flac" --base "lyrics.txt"
+pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --base "lyrics.txt"
 ```
 
 PyLy will use Whisper's timing but replace the guessed words with yours wherever they match. If Whisper is mostly right but has a few wrong words here and there, this cleans those up nicely.
@@ -175,7 +175,7 @@ PyLy will use Whisper's timing but replace the guessed words with yours wherever
 If you have a lyrics file for every track and they're named the same as the audio file, you can use a wildcard:
 
 ```
-pyly "X:\Music\Artist\Album" --base "*.txt"
+pyly "X:\Music\Queen\A Night at the Opera" --base "*.txt"
 ```
 
 For each `.flac` (or `.mp3`, etc.) it finds, PyLy will look for a matching `.txt` with the same name in the same folder.
@@ -183,7 +183,7 @@ For each `.flac` (or `.mp3`, etc.) it finds, PyLy will look for a matching `.txt
 **If you really trust your lyrics file** and want PyLy to fix even the sections where Whisper has gone completely off the rails, add `--truth`:
 
 ```
-pyly "X:\Music\Artist\Album\01 - Track.flac" --base "lyrics.txt" --truth
+pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --base "lyrics.txt" --truth
 ```
 
 This is more aggressive — it replaces garbled Whisper sections with your lyrics rather than just cleaning up close matches. It only kicks in when PyLy is confident the overall transcript is aligned to the right song, so it won't silently corrupt things if the wrong lyrics file is used.
@@ -213,8 +213,8 @@ If you have a GPU, `medium` or `large` are worth trying. On CPU, `small` is usua
 When you use `--fetch`, PyLy pulls lyrics from an online source. You can pick which one:
 
 ```
-pyly "X:\Music\Artist\Album\01 - Track.flac" --fetch lrclib
-pyly "X:\Music\Artist\Album\01 - Track.flac" --fetch musicbrainz
+pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch lrclib
+pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch musicbrainz
 ```
 
 | Provider | What it does |
@@ -253,12 +253,12 @@ You can point this at a single `.lrc` file, a single audio file (PyLy will find 
 
 ## Checking and fixing file tags
 
-Sometimes a track's embedded tags are simply wrong — a ripper or a careless edit leaves `02 No Lie.mp3` carrying the title *"Embassy Money"*. Lyrics only line up when the tags are right, so PyLy can audit them and, if you ask, fix them.
+Sometimes a track's embedded tags are simply wrong — a ripper or a careless edit leaves `03 I'm in Love with My Car.flac` carrying the title *"You're My Best Friend"* (another track from the same album). Lyrics only line up when the tags are right, so PyLy can audit them and, if you ask, fix them.
 
 **Check (read-only):**
 
 ```
-pyly "X:\Music\2 Chainz\Based on a T.R.U. Story" --check-file-metadata
+pyly "X:\Music\Queen\A Night at the Opera" --check-file-metadata
 ```
 
 For each file, PyLy compares the embedded **title, artist, album, year, and track** against what the file *should* contain and prints any mismatches. Nothing is written. PyLy works out the "correct" value in this order:
@@ -272,16 +272,16 @@ PyLy reads `.nfo` files leniently: the `<?xml?>` header is optional, XML entitie
 **Strict vs loose.** The check takes an optional mode:
 
 ```
-pyly "...\album" --check-file-metadata          # strict (default)
-pyly "...\album" --check-file-metadata loose
+pyly "...\A Night at the Opera" --check-file-metadata          # strict (default)
+pyly "...\A Night at the Opera" --check-file-metadata loose
 ```
 
 | Mode | Meaning |
 |---|---|
 | `strict` *(default)* | The tag **must** match the `.nfo` field. |
-| `loose` | The tag **may** match the `.nfo` field **or** the folder layout, and trailing `(...)`/`[...]` qualifiers like `(Digital Media 01)`, `(Remastered)` or `(Live)` are ignored. |
+| `loose` | The tag **may** match the `.nfo` field **or** the folder layout, and trailing `(...)`/`[...]` qualifiers like `(Remastered 2011)`, `(Live)` or `(Bonus Track)` are ignored. |
 
-`loose` is handy when your `.nfo` files carry MusicBrainz medium/edition suffixes you don't keep in your tags. To fix under loose matching, combine the two flags: `pyly "...\album" -z loose -Z`. On its own, `-Z` uses strict matching.
+`loose` is handy when your `.nfo` files carry MusicBrainz medium/edition suffixes you don't keep in your tags. To fix under loose matching, combine the two flags: `pyly "...\A Night at the Opera" -z loose -Z`. On its own, `-Z` uses strict matching.
 
 The exit code is non-zero when any mismatch remains, so `--check-file-metadata` is usable as a library health check in scripts.
 
@@ -289,10 +289,10 @@ The exit code is non-zero when any mismatch remains, so `--check-file-metadata` 
 
 ```
 # Default: write tags in place, but back up each original first
-pyly "X:\Music\2 Chainz\Based on a T.R.U. Story" --match-file-metadata
+pyly "X:\Music\Queen\A Night at the Opera" --match-file-metadata
 
 # Preview without changing anything
-pyly "...\Based on a T.R.U. Story" --match-file-metadata --dry-run
+pyly "...\A Night at the Opera" --match-file-metadata --dry-run
 ```
 
 `--match-file-metadata` (`-Z`) only rewrites the fields that are actually wrong, using the same `album.nfo → layout → filename` source order. It takes an optional mode:
@@ -304,8 +304,8 @@ pyly "...\Based on a T.R.U. Story" --match-file-metadata --dry-run
 | `copy` | Leaves the original untouched and writes a new `<name>.tagged.<ext>` |
 
 ```
-pyly "...\album" --match-file-metadata direct    # no backup
-pyly "...\album" --match-file-metadata copy       # write alongside, keep original
+pyly "...\A Night at the Opera" --match-file-metadata direct    # no backup
+pyly "...\A Night at the Opera" --match-file-metadata copy       # write alongside, keep original
 ```
 
 > This is the **only** mode in which PyLy modifies your audio files. Tags are rewritten with `ffmpeg -c copy`, so the audio stream itself is never re-encoded.
@@ -318,10 +318,10 @@ Some `album.nfo` files are sparse — they carry a `musicbrainzalbumid` (or `mus
 
 ```
 # Preview what would be added (nothing is written)
-pyly "X:\Music\Tyler, The Creator\DON'T TAP THE GLASS" --update-nfo --dry-run
+pyly "X:\Music\Queen\A Night at the Opera" --update-nfo --dry-run
 
 # Actually write it
-pyly "X:\Music\Tyler, The Creator\DON'T TAP THE GLASS" --update-nfo
+pyly "X:\Music\Queen\A Night at the Opera" --update-nfo
 
 # A whole library at once
 pyly "X:\Music" --recursive --update-nfo
@@ -383,20 +383,20 @@ pyly "X:\Music" --recursive --layout flat
 
 ### Custom layout templates
 
-If your folder structure doesn't match a preset, you can describe it directly. Say your music is organised like `X:\Music\Pink Floyd\The Wall\01 - In the Flesh.flac` — you'd write:
+If your folder structure doesn't match a preset, you can describe it directly. Say your music keeps the artist and album in one folder, like `X:\Music\Queen - A Night at the Opera\11 - Bohemian Rhapsody.flac` — you'd write:
 
 ```
-pyly "X:\Music" --recursive --layout "X:\Music\{Artist Name}\{Album Title}\{track:00} - {Track Title}"
+pyly "X:\Music" --recursive --layout "X:\Music\{Artist Name} - {Album Title}\{track:00} - {Track Title}"
 ```
 
-PyLy reads the values directly from the folder and file names, so even without tags it knows the artist is "Pink Floyd", the album is "The Wall", and the track is "In the Flesh".
+PyLy reads the values directly from the folder and file names, so even without tags it knows the artist is "Queen", the album is "A Night at the Opera", and the track is "Bohemian Rhapsody".
 
 ### Custom search queries
 
 You can also write the search query yourself using the same tokens:
 
 ```
-pyly "X:\Music\Artist\Album\01 - Track.flac" --fetch "lrclib:{Artist Name} {Track Title}"
+pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch "lrclib:{Artist Name} {Track Title}"
 ```
 
 Available tokens (filled from tags first, then inferred from path):
@@ -412,10 +412,10 @@ By default PyLy writes some metadata at the top of every `.lrc` file. This is mo
 A typical header looks like this:
 
 ```
-[ar:Pink Floyd]
-[al:The Wall]
-[ti:Comfortably Numb]
-[length:06:23.45]
+[ar:Queen]
+[al:A Night at the Opera]
+[ti:Bohemian Rhapsody]
+[length:05:55.00]
 [url:https://lrclib.net/api/get/12345]
 [id:12345]
 [PyLy:https://lrclib.net/api/get/12345]
