@@ -26,6 +26,7 @@ It runs your audio through [Whisper](https://github.com/openai/whisper) (an offl
 * [Advanced: fetch templates and folder layout hints](#advanced-fetch-templates-and-folder-layout-hints)
 * [Advanced: what goes inside a .lrc file](#advanced-what-goes-inside-a-lrc-file)
 * [ffmpeg](#ffmpeg)
+* [How a run is ordered](#how-a-run-is-ordered)
 * [All flags](#all-flags)
 
 ---
@@ -451,6 +452,59 @@ PyLy/
 PyLy will find them there. This keeps things self-contained and doesn't affect anything else on your system.
 
 If PyLy can't find ffmpeg anywhere, it will tell you clearly rather than fail silently.
+
+---
+
+## How a run is ordered
+
+You can combine flags freely — PyLy always runs the work in the same sensible order, no matter what order you type them on the command line. Knowing that order helps you reason about a command before you run it.
+
+Picture this folder:
+
+```
+X:\Music\Queen\A Night at the Opera\
+    album.nfo
+    03 I'm in Love with My Car.flac     (3:05)
+    11 Bohemian Rhapsody.flac           (5:55)
+```
+
+```mermaid
+flowchart TD
+    S["Step 0 · Settings — apply throughout<br/>-r · -o · -q · -v · -m · -l · -d · -y · -a/-A · --color · base tuning"] -.-> A
+    A["1 · Select files<br/>&lt;path&gt; · -r recurse · -F only Whisper-made .lrc"] --> B
+    B["2 · Tidy metadata<br/>-n enrich album.nfo → -Z fix tags → -z check"] --> C
+    C["3 · Get reference lyrics<br/>-R redownload · -f fetch · -b base · -k/-K role"] --> D
+    D["4 · Transcribe<br/>Whisper → .srt → reduced (skipped if -k has synced)"] --> E
+    E["5 · Align and patch<br/>-s strict · thresholds · -u truth · -e/-E rescue"] --> F
+    F["6 · Write outputs<br/>.lrc + header (-a/-A) · .fetched.lrc sidecar (-K)"] --> G
+    G["7 · Clean up<br/>-c delete intermediate .srt files"]
+```
+
+**Step 0 — Settings.** Everything that configures *how* the run behaves rather than performing a step: traversal (`-r`), write policy (`-o`), simulate (`-q`), logging (`-v`), Whisper choices (`-m`/`-l`/`-d`), the folder-layout hint (`-y`), header on/off (`-a`/`-A`), colour, and the alignment-tuning knobs (`-t`/`-w`/`-x`/`-i`/`-e`/`-E`).
+
+1. **Select files.** Resolve `<path>` (with `-r` for subfolders), then optionally narrow the list with `-F`.
+2. **Tidy metadata.** First `-n` fills in `album.nfo` from MusicBrainz, then `-Z` corrects the audio tags from it, then `-z` checks them. Doing this first means later steps see clean data — e.g. PyLy learns that `11 Bohemian Rhapsody.flac` should be titled *Bohemian Rhapsody* with a length of `5:55`.
+3. **Get reference lyrics.** Reuse an embedded URL (`-R`), fetch online (`-f`), or read a local file (`-b`); `-k`/`-K` decide whether fetched synced lyrics become the output or a sidecar.
+4. **Transcribe.** Run Whisper to a `.srt` and reduce it — skipped when `-k` already supplied synced lyrics.
+5. **Align and patch.** Match the reference against Whisper's lines and apply the rescue/truth passes.
+6. **Write outputs.** Save `I'm in Love with My Car.lrc` and `Bohemian Rhapsody.lrc` (with header tags unless `-A`), plus a `.fetched.lrc` sidecar if `-K`.
+7. **Clean up.** With `-c`, delete the intermediate `.srt` files.
+
+Today this is **two passes**. The metadata flags (`-n`/`-Z`/`-z`) run as their own pass — steps 1–2 — and stop, so you tidy first:
+
+```
+# Pass 1 — metadata: enrich the .nfo, fix the tags from it, then verify
+pyly "X:\Music\Queen\A Night at the Opera" -r -n -Z -z
+```
+
+then run the lyrics pass — steps 1 and 3–7:
+
+```
+# Pass 2 — lyrics: fetch a reference, transcribe, align, write, tidy up
+pyly "X:\Music\Queen\A Night at the Opera" -r -f -c
+```
+
+> The diagram is the full map; the split above is just where the two passes sit on it. When `-n`, `-z`, or `-Z` is present, PyLy stays in metadata mode and doesn't transcribe — folding both passes into one command is the "actual order of operations" work still to come.
 
 ---
 
