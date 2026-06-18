@@ -294,6 +294,29 @@ def read_nfo_mbids(nfo_path: Path) -> tuple[str, str]:
    return release, group
 
 
+def album_nfo_missing_fields(nfo_path: Path) -> list[str]:
+   """
+   Which substantive fields an album.nfo still lacks, judged locally (no
+   network). "Substantive" means the data worth a MusicBrainz lookup: the
+   album artist, the year, and a track list. Incidental extras (label,
+   barcode, the secondary MBID) are filled opportunistically when a lookup
+   happens for another reason, but their absence alone does not warrant one.
+
+   An empty list means the file is complete enough to skip the lookup.
+   """
+   text = _read_text(nfo_path) or ""
+   album_level = re.sub(r"<track\b[^>]*>.*?</track>", "", text, flags=re.IGNORECASE | re.DOTALL)
+
+   missing: list[str] = []
+   if not (_nfo_first("albumartist", album_level) or _nfo_first("artist", album_level)):
+      missing.append("artist")
+   if not _nfo_year(album_level):
+      missing.append("year")
+   if not _nfo_blocks("track", text):
+      missing.append("tracks")
+   return missing
+
+
 def enrich_album_nfo(nfo_path: Path, release, overwrite: bool = False) -> tuple[list[str], str]:
    """
    Merge a MusicBrainz release into an album.nfo's text.

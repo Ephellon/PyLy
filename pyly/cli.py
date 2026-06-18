@@ -666,7 +666,7 @@ def _run_update_nfo(ns) -> int:
    import shutil
    from pathlib import Path as _Path
 
-   from .file_metadata import read_nfo_mbids, enrich_album_nfo, _read_text
+   from .file_metadata import read_nfo_mbids, album_nfo_missing_fields, enrich_album_nfo, _read_text
    from .lyrics_fetch import fetch_mb_release, resolve_release_from_group
 
    root = _Path(ns.path).expanduser()
@@ -695,11 +695,27 @@ def _run_update_nfo(ns) -> int:
       label = nfo_path.parent.name or nfo_path.name
       try:
          release_id, group_id = read_nfo_mbids(nfo_path)
-         if not release_id and group_id:
-            release_id = resolve_release_from_group(group_id) or ""
-         if not release_id:
+         if not (release_id or group_id):
             no_id += 1
             print(warn(f"{label}  (no musicbrainz id in album.nfo)"))
+            continue
+
+         # Check locally before touching the network: only hit MusicBrainz when
+         # a substantive field is missing (or --overwrite forces a refresh).
+         missing = album_nfo_missing_fields(nfo_path)
+         if not ns.overwrite and not missing:
+            skipped += 1
+            print(ok(f"{label}  (already complete — skipped MusicBrainz lookup)"))
+            continue
+
+         if missing:
+            print(info(f"{label}  (missing: {', '.join(missing)}) — looking up MusicBrainz"))
+
+         if not release_id:
+            release_id = resolve_release_from_group(group_id) or ""
+         if not release_id:
+            fail += 1
+            print(err(f"{label}  (could not resolve a release from the release-group id)"))
             continue
 
          release = fetch_mb_release(release_id)
