@@ -285,11 +285,12 @@ def main(argv: list[str] | None = None) -> int:
       ns.fetch = ""
 
    # ------------------------------------------------------------------
-   # --update-nfo / --check-file-metadata / --match-file-metadata:
-   # standalone tag/nfo modes. They can be combined and run in a sensible
-   # order — enrich the .nfo from MusicBrainz first, then check/fix the audio
-   # tags against the now-complete .nfo. The combined exit code is the worst
-   # of the runs (non-zero if any reported problems or failed).
+   # Steps 1-2 — metadata grooming. When -n/-Z/-z are present they run first,
+   # in order: enrich the .nfo from MusicBrainz, fix the audio tags from it,
+   # then check. The run then flows into the lyrics pipeline (steps 3-7) only
+   # when lyrics work was actually requested; a bare metadata command stops
+   # here instead of transcribing every file. The final exit code is the worst
+   # of every stage that ran.
    # ------------------------------------------------------------------
    match_mode = None
    if ns.match_file_metadata is not None:
@@ -309,14 +310,19 @@ def main(argv: list[str] | None = None) -> int:
    elif ns.check_file_metadata:
       exit_codes.append(_run_file_metadata(ns, write_mode=None, strictness=ns.check_file_metadata))
 
-   if exit_codes:
+   lyrics_requested = bool(
+      ns.fetch is not None or ns.base_lyrics or ns.keep_as_primary
+      or ns.keep_as_alternate or ns.redownload
+   )
+   if exit_codes and not lyrics_requested:
       return max(exit_codes)
 
    # ------------------------------------------------------------------
-   # --redownload mode: work directly from .lrc files (or audio files)
+   # Step 3 (fast path) — --redownload: refresh from the embedded .lrc URL
    # ------------------------------------------------------------------
    if ns.redownload:
-      return _run_redownload(ns)
+      exit_codes.append(_run_redownload(ns))
+      return max(exit_codes)
 
    # ------------------------------------------------------------------
    # Normal pipeline mode
@@ -425,7 +431,8 @@ def main(argv: list[str] | None = None) -> int:
 
    live.clear()
    banner(f"{ok_count} - OK / {skipped_count} - SKIPPED / {fail_count} - FAIL")
-   return 0 if fail_count == 0 else 1
+   exit_codes.append(0 if fail_count == 0 else 1)
+   return max(exit_codes)
 
 
 def _run_redownload(ns) -> int:

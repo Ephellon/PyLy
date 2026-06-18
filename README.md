@@ -490,21 +490,15 @@ flowchart TD
 6. **Write outputs.** Save `I'm in Love with My Car.lrc` and `Bohemian Rhapsody.lrc` (with header tags unless `-A`), plus a `.fetched.lrc` sidecar if `-K`.
 7. **Clean up.** With `-c`, delete the intermediate `.srt` files.
 
-Today this is **two passes**. The metadata flags (`-n`/`-Z`/`-z`) run as their own pass — steps 1–2 — and stop, so you tidy first:
+It all happens in **one pass**, in the order above. A "do everything" command for the album:
 
 ```
-# Pass 1 — metadata: enrich the .nfo, fix the tags from it, then verify
-pyly "X:\Music\Queen\A Night at the Opera" -r -n -Z -z
+pyly "X:\Music\Queen\A Night at the Opera" -r -n -Z -f -c
 ```
 
-then run the lyrics pass — steps 1 and 3–7:
+enriches the `.nfo` from MusicBrainz, fixes the audio tags from it, then fetches a lyrics reference, transcribes, aligns, writes the `.lrc` files, and deletes the intermediates — each stage in turn.
 
-```
-# Pass 2 — lyrics: fetch a reference, transcribe, align, write, tidy up
-pyly "X:\Music\Queen\A Night at the Opera" -r -f -c
-```
-
-> The diagram is the full map; the split above is just where the two passes sit on it. When `-n`, `-z`, or `-Z` is present, PyLy stays in metadata mode and doesn't transcribe — folding both passes into one command is the "actual order of operations" work still to come.
+> **Metadata-only shortcut.** If you pass *only* metadata flags (`-n`/`-Z`/`-z`) and no lyrics flag, PyLy stops after step 2 instead of transcribing every file — so a quick `pyly "…" -r -z` just reports tag problems and exits. Add a lyrics flag (`-f`, `-b`, `-R`, `-k`, or `-K`) to carry on into steps 3–7. The exit code is the worst of the stages that ran, so a tag mismatch still surfaces as a non-zero exit even when the lyrics were written fine.
 
 ---
 
