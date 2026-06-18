@@ -285,20 +285,32 @@ def main(argv: list[str] | None = None) -> int:
       ns.fetch = ""
 
    # ------------------------------------------------------------------
-   # --check-file-metadata / --match-file-metadata: standalone tag modes
+   # --update-nfo / --check-file-metadata / --match-file-metadata:
+   # standalone tag/nfo modes. They can be combined and run in a sensible
+   # order — enrich the .nfo from MusicBrainz first, then check/fix the audio
+   # tags against the now-complete .nfo. The combined exit code is the worst
+   # of the runs (non-zero if any reported problems or failed).
    # ------------------------------------------------------------------
+   match_mode = None
    if ns.match_file_metadata is not None:
-      mode = ns.match_file_metadata.strip().lower()
-      if mode not in {"backup", "direct", "copy"}:
-         print(f"[X] --match-file-metadata MODE must be backup, direct, or copy (got {mode!r}).", file=sys.stderr)
+      match_mode = ns.match_file_metadata.strip().lower()
+      if match_mode not in {"backup", "direct", "copy"}:
+         print(f"[X] --match-file-metadata MODE must be backup, direct, or copy (got {match_mode!r}).", file=sys.stderr)
          return 2
-      strictness = ns.check_file_metadata or "strict"
-      return _run_file_metadata(ns, write_mode=mode, strictness=strictness)
-   if ns.check_file_metadata:
-      return _run_file_metadata(ns, write_mode=None, strictness=ns.check_file_metadata)
+
+   exit_codes: list[int] = []
 
    if ns.update_nfo:
-      return _run_update_nfo(ns)
+      exit_codes.append(_run_update_nfo(ns))
+
+   if match_mode is not None:
+      strictness = ns.check_file_metadata or "strict"
+      exit_codes.append(_run_file_metadata(ns, write_mode=match_mode, strictness=strictness))
+   elif ns.check_file_metadata:
+      exit_codes.append(_run_file_metadata(ns, write_mode=None, strictness=ns.check_file_metadata))
+
+   if exit_codes:
+      return max(exit_codes)
 
    # ------------------------------------------------------------------
    # --redownload mode: work directly from .lrc files (or audio files)
