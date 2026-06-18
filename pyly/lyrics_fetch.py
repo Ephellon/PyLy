@@ -478,6 +478,127 @@ def _mb_get(url: str) -> dict:
    return json.loads(payload)
 
 
+# ---------------------------------------------------------------------------
+# MusicBrainz release lookup (used to enrich album.nfo from an embedded MBID)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class MBTrack:
+   position: int | None
+   title: str
+   length_ms: int | None
+   recording_id: str
+   artist_credit: str
+
+
+@dataclass(frozen=True)
+class MBRelease:
+   release_id: str
+   release_group_id: str
+   title: str
+   album_artist: str
+   date: str
+   year: str
+   label: str
+   barcode: str
+   tracks: list[MBTrack]
+
+
+def _mb_join_credit(credit) -> str:
+   """Render an artist-credit list into a display string (handles feat./joins)."""
+   if not isinstance(credit, list):
+      return ""
+   parts: list[str] = []
+   for entry in credit:
+      if not isinstance(entry, dict):
+         continue
+      name = entry.get("name") or (entry.get("artist") or {}).get("name") or ""
+      join = entry.get("joinphrase") or ""
+      if name:
+         parts.append(f"{name}{join}")
+   return "".join(parts).strip()
+
+
+def fetch_mb_release(release_mbid: str, log_fn=None) -> MBRelease | None:
+   """Fetch a MusicBrainz release (with recordings + credits + labels)."""
+   inc = "recordings+artist-credits+labels+release-groups"
+   params = urllib.parse.urlencode({"inc": inc, "fmt": "json"})
+   url = f"https://musicbrainz.org/ws/2/release/{release_mbid}?{params}"
+   try:
+      data = _mb_get(url)
+   except Exception as exc:
+      _log_warn(f"MB RELEASE: lookup failed ({release_mbid}): {exc}", log_fn=log_fn)
+      return None
+   if not isinstance(data, dict) or not data.get("id"):
+      return None
+   return _parse_mb_release(data)
+
+
+def resolve_release_from_group(rg_mbid: str, log_fn=None) -> str | None:
+   """Pick a release id from a release-group MBID (first listed release)."""
+   params = urllib.parse.urlencode({"inc": "releases", "fmt": "json"})
+   url = f"https://musicbrainz.org/ws/2/release-group/{rg_mbid}?{params}"
+   try:
+      data = _mb_get(url)
+   except Exception as exc:
+      _log_warn(f"MB GROUP: lookup failed ({rg_mbid}): {exc}", log_fn=log_fn)
+      return None
+   releases = data.get("releases") if isinstance(data, dict) else None
+   if isinstance(releases, list):
+      for rel in releases:
+         if isinstance(rel, dict) and rel.get("id"):
+            return rel["id"]
+   return None
+
+
+def _parse_mb_release(data: dict) -> MBRelease:
+   date = str(data.get("date") or "")
+   year_match = re.search(r"\b(19|20)\d{2}\b", date)
+
+   label = ""
+   for li in data.get("label-info") or []:
+      lab = (li or {}).get("label") or {}
+      if lab.get("name"):
+         label = lab["name"]
+         break
+
+   tracks: list[MBTrack] = []
+   for medium in data.get("media") or []:
+      for t in (medium or {}).get("tracks") or []:
+         if not isinstance(t, dict):
+            continue
+         rec = t.get("recording") or {}
+         pos = t.get("position") or t.get("number")
+         try:
+            pos = int(pos) if pos is not None else None
+         except (TypeError, ValueError):
+            pos = None
+         length = t.get("length") or rec.get("length")
+         try:
+            length = int(length) if length is not None else None
+         except (TypeError, ValueError):
+            length = None
+         tracks.append(MBTrack(
+            position=pos,
+            title=str(rec.get("title") or t.get("title") or "").strip(),
+            length_ms=length,
+            recording_id=str(rec.get("id") or ""),
+            artist_credit=_mb_join_credit(rec.get("artist-credit")),
+         ))
+
+   return MBRelease(
+      release_id=str(data.get("id") or ""),
+      release_group_id=str((data.get("release-group") or {}).get("id") or ""),
+      title=str(data.get("title") or "").strip(),
+      album_artist=_mb_join_credit(data.get("artist-credit")),
+      date=date,
+      year=year_match.group(0) if year_match else "",
+      label=label,
+      barcode=str(data.get("barcode") or "").strip(),
+      tracks=tracks,
+   )
+
+
 def _fetch_musicbrainz(query: str, *, config: FetchConfig | None = None, log_fn=None, **_kwargs) -> FetchedLyrics | None:
    """
    MusicBrainz → lrclib pipeline:

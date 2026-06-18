@@ -23,6 +23,11 @@ schemas are flat enough that regex extraction is reliable.
         direct  write in place, no backup
         copy    leave the original untouched, write <stem>.tagged.<ext>
 
+* update-nfo  (--update-nfo / -n)
+    Enrich an album.nfo from the MusicBrainz release its embedded MBID points
+    at: add the album artist, year, label, barcode, and the full track list.
+    Non-destructive by default; backs up album.nfo.bak before writing.
+
 ffprobe reads tags; ffmpeg writes them.  Both fall back to the bundled
 binaries under ``ff/`` when not found on PATH, mirroring the rest of PyLy.
 """
@@ -275,6 +280,126 @@ def parse_artist_nfo(nfo_path: Path) -> ArtistNfo | None:
          albums.append(NfoAlbumRef(title=title, year=year))
 
    return ArtistNfo(path=nfo_path, name=name, albums=albums)
+
+
+# ---------------------------------------------------------------------------
+# album.nfo enrichment from a MusicBrainz release
+# ---------------------------------------------------------------------------
+
+def read_nfo_mbids(nfo_path: Path) -> tuple[str, str]:
+   """Return (release_mbid, release_group_mbid) from an album.nfo, '' if absent."""
+   text = _read_text(nfo_path) or ""
+   release = _nfo_first("musicbrainzalbumid", text)
+   group = _nfo_first("musicbrainzreleasegroupid", text)
+   return release, group
+
+
+def enrich_album_nfo(nfo_path: Path, release, overwrite: bool = False) -> tuple[list[str], str]:
+   """
+   Merge a MusicBrainz release into an album.nfo's text.
+
+   Returns ``(changes, new_text)``. ``changes`` lists human-readable edits;
+   an empty list means the file is already complete (new_text == original).
+
+   Non-destructive by default: only missing top-level fields are inserted and
+   the <track> list is only added when the file has none. With ``overwrite``,
+   existing scalar fields are replaced and the track list is regenerated.
+   """
+   text = _read_text(nfo_path) or ""
+   changes: list[str] = []
+   indent = _detect_indent(text)
+
+   # Scalar fields MusicBrainz can supply, mapped to album.nfo tag names.
+   scalars = [
+      ("artist", release.album_artist),
+      ("year", release.year),
+      ("label", release.label),
+      ("barcode", release.barcode),
+      ("musicbrainzalbumid", release.release_id),
+      ("musicbrainzreleasegroupid", release.release_group_id),
+   ]
+
+   album_level = re.sub(r"<track\b[^>]*>.*?</track>", "", text, flags=re.IGNORECASE | re.DOTALL)
+   inserts: list[str] = []
+
+   for tag, value in scalars:
+      if not value:
+         continue
+      existing = _nfo_first(tag, album_level)
+      if not existing:
+         inserts.append(f"{indent}<{tag}>{_xml_escape(value)}</{tag}>")
+         changes.append(f"+{tag}")
+      elif overwrite and _norm(existing) != _norm(value):
+         text = _replace_first_tag(text, tag, value)
+         album_level = _replace_first_tag(album_level, tag, value)
+         changes.append(f"~{tag}")
+
+   existing_tracks = _nfo_blocks("track", text)
+   if release.tracks and (overwrite or not existing_tracks):
+      if existing_tracks and overwrite:
+         text = re.sub(r"[ \t]*<track\b[^>]*>.*?</track>\s*\n?", "", text, flags=re.IGNORECASE | re.DOTALL)
+         changes.append(f"~{len(release.tracks)} tracks")
+      else:
+         changes.append(f"+{len(release.tracks)} tracks")
+      for tr in release.tracks:
+         inserts.append(_track_xml(tr, indent))
+
+   if not changes:
+      return [], text
+
+   new_text = _insert_before_album_close(text, inserts) if inserts else text
+   return changes, new_text
+
+
+def _track_xml(track, indent: str) -> str:
+   pad = indent + indent
+   lines = [f"{indent}<track>"]
+   if track.position is not None:
+      lines.append(f"{pad}<position>{track.position}</position>")
+   lines.append(f"{pad}<title>{_xml_escape(track.title)}</title>")
+   if track.artist_credit:
+      lines.append(f"{pad}<artist>{_xml_escape(track.artist_credit)}</artist>")
+   duration = _ms_to_mmss(track.length_ms)
+   if duration:
+      lines.append(f"{pad}<duration>{duration}</duration>")
+   if track.recording_id:
+      lines.append(f"{pad}<musicbrainztrackid>{track.recording_id}</musicbrainztrackid>")
+   lines.append(f"{indent}</track>")
+   return "\n".join(lines)
+
+
+def _insert_before_album_close(text: str, inserts: list[str]) -> str:
+   block = "".join(f"{line}\n" for line in inserts)
+   m = re.search(r"\n([ \t]*)</album>", text)
+   if m:
+      at = m.start() + 1  # just after the newline preceding </album>
+      return text[:at] + block + text[at:]
+   # Malformed / no closing tag: append.
+   return text.rstrip("\n") + "\n" + block
+
+
+def _replace_first_tag(text: str, tag: str, value: str) -> str:
+   return re.sub(
+      rf"(<{tag}\b[^>]*>).*?(</{tag}>)",
+      lambda m: m.group(1) + _xml_escape(value) + m.group(2),
+      text, count=1, flags=re.IGNORECASE | re.DOTALL,
+   )
+
+
+def _detect_indent(text: str) -> str:
+   m = re.search(r"\n([ \t]+)<\w", text)
+   return m.group(1) if m else "  "
+
+
+def _xml_escape(value: str) -> str:
+   return (value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _ms_to_mmss(ms: int | None) -> str:
+   if not ms or ms <= 0:
+      return ""
+   total = int(round(ms / 1000.0))
+   return f"{total // 60}:{total % 60:02d}"
 
 
 def _read_text(path: Path) -> str | None:

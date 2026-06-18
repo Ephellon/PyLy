@@ -21,6 +21,7 @@ It runs your audio through [Whisper](https://github.com/openai/whisper) (an offl
 * [Lyric providers](#lyric-providers)
 * [Re-downloading lyrics](#re-downloading-lyrics)
 * [Checking and fixing file tags](#checking-and-fixing-file-tags)
+* [Filling in album.nfo details from MusicBrainz](#filling-in-albumnfo-details-from-musicbrainz)
 * [Advanced: fine-tuning the lyrics alignment](#advanced-fine-tuning-the-lyrics-alignment)
 * [Advanced: fetch templates and folder layout hints](#advanced-fetch-templates-and-folder-layout-hints)
 * [Advanced: what goes inside a .lrc file](#advanced-what-goes-inside-a-lrc-file)
@@ -310,6 +311,29 @@ pyly "...\album" --match-file-metadata copy       # write alongside, keep origin
 
 ---
 
+## Filling in album.nfo details from MusicBrainz
+
+Some `album.nfo` files are sparse — they carry a `musicbrainzalbumid` (or `musicbrainzreleasegroupid`) but little else: no track list, no album artist, no year. Since that MBID points at the exact release, PyLy can look it up on MusicBrainz and fill in the gaps:
+
+```
+# Preview what would be added (nothing is written)
+pyly "X:\Music\Tyler, The Creator\DON'T TAP THE GLASS" --update-nfo --dry-run
+
+# Actually write it
+pyly "X:\Music\Tyler, The Creator\DON'T TAP THE GLASS" --update-nfo
+
+# A whole library at once
+pyly "X:\Music" --recursive --update-nfo
+```
+
+For each `album.nfo`, PyLy reads the embedded MBID (preferring `musicbrainzalbumid`, falling back to resolving `musicbrainzreleasegroupid` to a release), fetches the release from MusicBrainz, and adds the **album artist, year, label, barcode**, and the full **track list** — each track with its position, title, credited artists (including `feat.` guests), duration, and recording MBID.
+
+It is **non-destructive by default**: anything already in the file (your `<rating>`, `<artistdesc>`, `<review>`, etc.) is left untouched, and only missing fields are added. Pass `--overwrite` to also replace existing fields that disagree with MusicBrainz and regenerate the track list. A backup is written to `album.nfo.bak` before any change, and `--dry-run` shows exactly what would be added without touching the file. Re-running on an already-complete file does nothing.
+
+> Needs internet. PyLy respects MusicBrainz's ~1 request/second rate limit, so a large library takes a moment per album.
+
+---
+
 ## Advanced: fine-tuning the lyrics alignment
 
 This section covers the controls that affect how PyLy matches a lyrics reference against Whisper's output. You probably won't need these unless the defaults aren't working well for a particular track.
@@ -451,6 +475,7 @@ If PyLy can't find ffmpeg anywhere, it will tell you clearly rather than fail si
 | `--find-better` | `-F` | Only process audio files whose existing `.lrc` was Whisper-transcribed (no external URL tag). Useful with `--fetch` to upgrade Whisper-only files |
 | `--check-file-metadata [mode]` | `-z` | Report files whose embedded tags (title, artist, album, year, track) don't match `album.nfo`/`artist.nfo` / the folder layout / the filename. `mode`: `strict` (default) or `loose` (also accepts the folder layout and ignores trailing `(...)` qualifiers). Read-only |
 | `--match-file-metadata [mode]` | `-Z` | Fix mismatched tags by writing the expected values into the file. `mode`: `backup` (default, keeps a `.bak`), `direct`, or `copy`. The only flag that modifies your audio |
+| `--update-nfo` | `-n` | Fill missing `album.nfo` data (album artist, year, barcode, full track list) by looking up its embedded MusicBrainz id. Non-destructive unless `--overwrite`; backs up `album.nfo.bak`; honours `--dry-run` |
 | `--base <file>` | `-b` | Plain text lyrics file to use as a reference |
 | `--lyrics <file>` | | Alias for `--base` |
 | `--truth` | `-u` | Trust the lyrics reference enough to replace garbled Whisper sections |

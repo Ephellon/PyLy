@@ -243,6 +243,17 @@ def main(argv: list[str] | None = None) -> int:
       ),
    )
 
+   # Enrich album.nfo from MusicBrainz using its embedded MBID
+   ap.add_argument(
+      "--update-nfo", "-n", action="store_true", default=False,
+      help=(
+         "Fill in missing album.nfo data (album artist, year, barcode, and the full track "
+         "list with titles/durations/MBIDs) by looking up the embedded musicbrainzalbumid "
+         "(or musicbrainzreleasegroupid) on MusicBrainz. Non-destructive: existing fields are "
+         "kept unless --overwrite is given. Backs up album.nfo.bak first; honours --dry-run."
+      ),
+   )
+
    ns = ap.parse_args(argv)
    set_color_enabled(ns.color)
 
@@ -285,6 +296,9 @@ def main(argv: list[str] | None = None) -> int:
       return _run_file_metadata(ns, write_mode=mode, strictness=strictness)
    if ns.check_file_metadata:
       return _run_file_metadata(ns, write_mode=None, strictness=ns.check_file_metadata)
+
+   if ns.update_nfo:
+      return _run_update_nfo(ns)
 
    # ------------------------------------------------------------------
    # --redownload mode: work directly from .lrc files (or audio files)
@@ -619,6 +633,89 @@ def _run_file_metadata(ns, write_mode: str | None, strictness: str = "strict") -
    # as a check in scripts. In match mode, fixed files no longer count as bad.
    unresolved = (problem_count - fixed_count) if write_mode else problem_count
    return 0 if (unresolved == 0 and fail_count == 0) else 1
+
+
+def _run_update_nfo(ns) -> int:
+   """
+   Handle --update-nfo: enrich each album.nfo from its embedded MusicBrainz id.
+
+   Collects album.nfo files under the path, looks up the release on MusicBrainz
+   (release id first, then release-group id), and writes back any missing
+   fields plus the track list. --overwrite replaces conflicting fields;
+   --dry-run previews; a .bak copy is kept before any write.
+   """
+   import shutil
+   from pathlib import Path as _Path
+
+   from .file_metadata import read_nfo_mbids, enrich_album_nfo, _read_text
+   from .lyrics_fetch import fetch_mb_release, resolve_release_from_group
+
+   root = _Path(ns.path).expanduser()
+   if not root.exists():
+      print(f"[X] Path not found: {root}", file=sys.stderr)
+      return 2
+
+   if root.is_file() and root.name.lower() == "album.nfo":
+      nfo_files = [root.resolve()]
+   elif root.is_dir():
+      pattern = root.rglob("album.nfo") if ns.recursive else root.glob("album.nfo")
+      nfo_files = sorted(f.resolve() for f in pattern)
+   else:
+      print(f"[X] --update-nfo expects an album.nfo file or a folder (got {root.name}).", file=sys.stderr)
+      return 2
+
+   if not nfo_files:
+      print("[!] No album.nfo files found.", file=sys.stderr)
+      return 1
+
+   banner(f"PyLy --update-nfo — {len(nfo_files)} album.nfo file(s)")
+
+   updated = skipped = no_id = fail = 0
+
+   for nfo_path in nfo_files:
+      label = nfo_path.parent.name or nfo_path.name
+      try:
+         release_id, group_id = read_nfo_mbids(nfo_path)
+         if not release_id and group_id:
+            release_id = resolve_release_from_group(group_id) or ""
+         if not release_id:
+            no_id += 1
+            print(warn(f"{label}  (no musicbrainz id in album.nfo)"))
+            continue
+
+         release = fetch_mb_release(release_id)
+         if not release:
+            fail += 1
+            print(err(f"{label}  (MusicBrainz lookup failed)"))
+            continue
+
+         changes, new_text = enrich_album_nfo(nfo_path, release, overwrite=ns.overwrite)
+         if not changes:
+            skipped += 1
+            print(ok(f"{label}  (already complete)"))
+            continue
+
+         summary = ", ".join(changes)
+         if ns.dry_run:
+            print(ok(f"{label}  would update: {summary}"))
+            updated += 1
+            continue
+
+         if new_text != (_read_text(nfo_path) or ""):
+            bak = nfo_path.with_name(nfo_path.name + ".bak")
+            if not bak.exists():
+               shutil.copy2(nfo_path, bak)
+            nfo_path.write_text(new_text, encoding="utf-8", newline="\n")
+         updated += 1
+         print(ok(f"{label}  updated: {summary}"))
+
+      except Exception as e:
+         fail += 1
+         print(err(f"{label}: {e}"))
+
+   verb = "WOULD UPDATE" if ns.dry_run else "UPDATED"
+   banner(f"{updated} - {verb} / {skipped} - COMPLETE / {no_id} - NO ID / {fail} - FAIL")
+   return 0 if fail == 0 else 1
 
 
 if __name__ == "__main__":
