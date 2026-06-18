@@ -471,9 +471,9 @@ X:\Music\Queen\A Night at the Opera\
 ```mermaid
 flowchart TD
     S["Step 0 · Settings — apply throughout<br/>-r · -o · -q · -v · -m · -l · -d · -y · -a/-A · --color · base tuning"] -.-> A
-    A["1 · Select files<br/>&lt;path&gt; · -r recurse · -F only Whisper-made .lrc"] --> B
+    A["1 · Select files<br/>&lt;path&gt; · -r recurse (feeds every stage)"] --> B
     B["2 · Tidy metadata<br/>-n enrich album.nfo → -Z fix tags → -z check"] --> C
-    C["3 · Get reference lyrics<br/>-R redownload · -f fetch · -b base · -k/-K role"] --> D
+    C["3 · Get reference lyrics<br/>-F Whisper-only filter · -R · -f · -b · -k/-K role"] --> D
     D["4 · Transcribe<br/>Whisper → .srt → reduced (skipped if -k has synced)"] --> E
     E["5 · Align and patch<br/>-s strict · thresholds · -u truth · -e/-E rescue"] --> F
     F["6 · Write outputs<br/>.lrc + header (-a/-A) · .fetched.lrc sidecar (-K)"] --> G
@@ -482,9 +482,9 @@ flowchart TD
 
 **Step 0 — Settings.** Everything that configures *how* the run behaves rather than performing a step: traversal (`-r`), write policy (`-o`), simulate (`-q`), logging (`-v`), Whisper choices (`-m`/`-l`/`-d`), the folder-layout hint (`-y`), header on/off (`-a`/`-A`), colour, and the alignment-tuning knobs (`-t`/`-w`/`-x`/`-i`/`-e`/`-E`).
 
-1. **Select files.** Resolve `<path>` (with `-r` for subfolders), then optionally narrow the list with `-F`.
+1. **Select files.** Resolve `<path>` (with `-r` for subfolders). This file list feeds every stage below.
 2. **Tidy metadata.** First `-n` fills in `album.nfo` from MusicBrainz, then `-Z` corrects the audio tags from it, then `-z` checks them. Doing this first means later steps see clean data — e.g. PyLy learns that `11 Bohemian Rhapsody.flac` should be titled *Bohemian Rhapsody* with a length of `5:55`.
-3. **Get reference lyrics.** Reuse an embedded URL (`-R`), fetch online (`-f`), or read a local file (`-b`); `-k`/`-K` decide whether fetched synced lyrics become the output or a sidecar.
+3. **Get reference lyrics.** `-F` first narrows *the lyrics pipeline only* to files whose existing `.lrc` was Whisper-made (the metadata steps above always see every file). Then reuse an embedded URL (`-R`), fetch online (`-f`), or read a local file (`-b`); `-k`/`-K` decide whether fetched synced lyrics become the output or a sidecar.
 4. **Transcribe.** Run Whisper to a `.srt` and reduce it — skipped when `-k` already supplied synced lyrics.
 5. **Align and patch.** Match the reference against Whisper's lines and apply the rescue/truth passes.
 6. **Write outputs.** Save `I'm in Love with My Car.lrc` and `Bohemian Rhapsody.lrc` (with header tags unless `-A`), plus a `.fetched.lrc` sidecar if `-K`.
@@ -508,7 +508,7 @@ enriches the `.nfo` from MusicBrainz, fixes the audio tags from it, then fetches
 |---|---|---|
 | `<path>` | | Audio file, `.lrc` file (with `--redownload`), or folder |
 | `--recursive` | `-r` | Also process subfolders |
-| `--overwrite` | `-o` | Replace existing `.lrc` files |
+| `--overwrite` | `-o` | Replace existing output instead of leaving it in place: existing `.lrc` files, and — with `--update-nfo` — existing `album.nfo` fields. Also required by `--redownload` to write |
 | `--clean` | `-c` | Delete the intermediate `.srt` files after finishing |
 | `--dry-run` | `-q` | Show what would happen without doing anything |
 | `--log` | `-v` | Save a detailed log file alongside each `.lrc` |
@@ -520,7 +520,7 @@ enriches the `.nfo` from MusicBrainz, fixes the audio tags from it, then fetches
 | `--keep-as-alternate` | `-K` | Save fetched synced lyrics as `.fetched.lrc`; still generate Whisper output |
 | `--redownload` | `-R` | Re-fetch lyrics from the URL saved in existing `.lrc` files. Requires `--overwrite` to write |
 | `--list-providers` | `-p` | Print available lyric providers and exit |
-| `--find-better` | `-F` | Only process audio files whose existing `.lrc` was Whisper-transcribed (no external URL tag). Useful with `--fetch` to upgrade Whisper-only files |
+| `--find-better` | `-F` | Limit the **lyrics pipeline** to audio files whose existing `.lrc` was Whisper-transcribed (no external URL tag). Useful with `--fetch` to upgrade Whisper-only files. Does not affect the metadata steps (`-n`/`-Z`/`-z`) |
 | `--check-file-metadata [mode]` | `-z` | Report files whose embedded tags (title, artist, album, year, track) don't match `album.nfo`/`artist.nfo` / the folder layout / the filename. `mode`: `strict` (default) or `loose` (also accepts the folder layout and ignores trailing `(...)` qualifiers). Read-only |
 | `--match-file-metadata [mode]` | `-Z` | Fix mismatched tags by writing the expected values into the file. `mode`: `backup` (default, keeps a `.bak`), `direct`, or `copy`. The only flag that modifies your audio |
 | `--update-nfo` | `-n` | Fill missing `album.nfo` data (album artist, year, barcode, full track list) by looking up its embedded MusicBrainz id. Non-destructive unless `--overwrite`; backs up `album.nfo.bak`; honours `--dry-run` |
