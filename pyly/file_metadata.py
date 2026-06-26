@@ -158,16 +158,23 @@ class AlbumNfo:
    tracks: list[NfoTrack] = field(default_factory=list)
 
    def track_for(self, position: int | None, title_hint: str = "") -> NfoTrack | None:
-      """Resolve a track entry by position first, then by a fuzzy title hint."""
-      if position is not None:
-         for t in self.tracks:
-            if t.position == position:
-               return t
+      """
+      Resolve the album.nfo track entry for a file.
+
+      Match by position first. When a position repeats — multi-disc albums
+      reuse 1..N on each disc, so e.g. position 16 exists on both discs — there
+      are several candidates, and the one whose title is closest to the file's
+      (the title hint) is chosen by edit distance instead of blindly taking
+      disc 1. When no position matches, fall back to the closest title across
+      the whole list.
+      """
+      same_pos = [t for t in self.tracks if position is not None and t.position == position]
+      if len(same_pos) == 1:
+         return same_pos[0]
+      if len(same_pos) > 1:
+         return _best_title_match(same_pos, title_hint) if title_hint else same_pos[0]
       if title_hint:
-         hint = _norm(title_hint)
-         for t in self.tracks:
-            if t.title and _norm(t.title) == hint:
-               return t
+         return _best_title_match(self.tracks, title_hint, min_similarity=0.6)
       return None
 
 
@@ -801,12 +808,86 @@ def _strip_trailing_qualifiers(value: str) -> str:
    return s
 
 
+# ---------------------------------------------------------------------------
+# Fuzzy (edit-distance) matching — spellchecking for titles/artists/albums
+# ---------------------------------------------------------------------------
+
+_PUNCT_RX = re.compile(r"[^\w\s]", re.UNICODE)
+
+# Two strings at least this similar (after loose normalization) are treated as
+# the same text — absorbs typos and tagger/database punctuation differences.
+_FUZZY_THRESHOLD = 0.85
+
+
+def _levenshtein(a: str, b: str) -> int:
+   """Classic edit distance (insert / delete / substitute), iterative two-row."""
+   if a == b:
+      return 0
+   if not a:
+      return len(b)
+   if not b:
+      return len(a)
+   prev = list(range(len(b) + 1))
+   for i, ca in enumerate(a, 1):
+      cur = [i]
+      for j, cb in enumerate(b, 1):
+         cost = 0 if ca == cb else 1
+         cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost))
+      prev = cur
+   return prev[-1]
+
+
+def _similarity(a: str, b: str) -> float:
+   """1.0 == identical, 0.0 == nothing shared (length-normalized edit distance)."""
+   longest = max(len(a), len(b))
+   if longest == 0:
+      return 1.0
+   return 1.0 - _levenshtein(a, b) / longest
+
+
+def _norm_loose(value: str) -> str:
+   """
+   ``_norm`` plus dropping every remaining punctuation mark, for fuzzy
+   comparison — so 'Superunknown (instrumental)' and 'Superunknown - Instrumental'
+   both reduce to 'superunknown instrumental'.
+   """
+   s = _PUNCT_RX.sub(" ", _norm(value))
+   return " ".join(s.split())
+
+
+def _fuzzy_text_eq(a: str, b: str) -> bool:
+   """Equal after loose normalization, or within the edit-distance threshold."""
+   na, nb = _norm_loose(a), _norm_loose(b)
+   if na == nb:
+      return True
+   # Too short for edit distance to be meaningful (e.g. 'Live' vs 'Love').
+   if len(na) < 5 or len(nb) < 5:
+      return False
+   return _similarity(na, nb) >= _FUZZY_THRESHOLD
+
+
+def _best_title_match(tracks, title_hint: str, min_similarity: float = 0.0):
+   """The track whose title is closest to ``title_hint`` by edit distance."""
+   hint = _norm_loose(title_hint)
+   best = None
+   best_sim = -1.0
+   for t in tracks:
+      if not getattr(t, "title", ""):
+         continue
+      sim = _similarity(hint, _norm_loose(t.title))
+      if sim > best_sim:
+         best, best_sim = t, sim
+   return best if (best is not None and best_sim >= min_similarity) else None
+
+
 def _field_eq(field_name: str, expected: str, actual: str) -> bool:
    if field_name == "year":
       return _extract_year(expected) == _extract_year(actual)
    if field_name == "track":
       return _extract_track(expected) == _extract_track(actual)
-   return _norm(expected) == _norm(actual)
+   if _norm(expected) == _norm(actual):
+      return True
+   return _fuzzy_text_eq(expected, actual)
 
 
 def _field_eq_loose(field_name: str, candidate: str, actual: str) -> bool:
@@ -814,7 +895,7 @@ def _field_eq_loose(field_name: str, candidate: str, actual: str) -> bool:
    if _field_eq(field_name, candidate, actual):
       return True
    if field_name in ("title", "album", "artist"):
-      return _norm(_strip_trailing_qualifiers(candidate)) == _norm(_strip_trailing_qualifiers(actual))
+      return _fuzzy_text_eq(_strip_trailing_qualifiers(candidate), _strip_trailing_qualifiers(actual))
    return False
 
 
