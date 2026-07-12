@@ -5,16 +5,37 @@ import os
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from .console_ui import info
+from .console_ui import info, warn
 
 _SPACE_RX = re.compile(r"\s+")
 _YEAR_RX = re.compile(r"\b(19|20)\d{2}\b")
 _TRACK_NUM_RX = re.compile(r"^\s*(\d+)\s*[-._ ]+\s*(.+)$")
 _TRACK_SIMPLE_RX = re.compile(r"^\s*(\d+)\s+(.+)$")
 _TOKEN_RX = re.compile(r"\{([^}]+)\}")
+
+# Which PathGuess field each layout-template token fills. Includes the obvious
+# aliases so a natural typo like {Album Name} (matching {Artist Name}) works
+# instead of silently capturing nothing.
+_LAYOUT_TOKEN_FIELD = {
+   "artist name": "artist",
+   "artist title": "artist",
+   "album title": "album",
+   "album name": "album",
+   "track title": "title",
+   "track name": "title",
+   "release year": "year",
+   "year": "year",
+   "track:0": "track_number",
+   "track:00": "track_number",
+   "medium:0": "disc_number",
+   "medium:00": "disc_number",
+}
+
+# Templates whose unrecognized tokens we've already warned about (warn once).
+_WARNED_LAYOUT_TEMPLATES: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -209,9 +230,22 @@ def is_layout_template(layout: str) -> bool:
 
 
 def infer_from_layout_template(audio_path: Path, layout: str) -> PathGuess:
-   base_guess = infer_from_layout_preset(audio_path, "default")
+   # Keep the filename-derived title/track/year, but drop the default preset's
+   # positional artist/album: with a custom template the folder positions are
+   # described by the template itself, whereas the preset guesses them the other
+   # way round (parent=artist, grandparent=album). Inheriting those for tokens
+   # the template doesn't capture would, on an Artist/Album/Track tree, wrongly
+   # make the album equal the artist folder name — corrupting tags under -Z.
+   base_guess = replace(infer_from_layout_preset(audio_path, "default"), artist="", album="")
    normalized_path = _normalize_match_path(audio_path)
    tokens, rx = _compile_layout_template(layout)
+
+   unknown = [t for t in tokens if t not in _LAYOUT_TOKEN_FIELD]
+   if unknown and layout not in _WARNED_LAYOUT_TEMPLATES:
+      _WARNED_LAYOUT_TEMPLATES.add(layout)
+      pretty = ", ".join("{" + t + "}" for t in unknown)
+      print(warn(f"layout template: unrecognized token(s) ignored: {pretty}"))
+
    flags = re.IGNORECASE if os.name == "nt" else 0
    match = re.match(rx, normalized_path, flags=flags)
    if not match:
@@ -281,18 +315,11 @@ def _extract_layout_tokens(tokens: list[str], match: re.Match) -> dict[str, str 
       cleaned = _SPACE_RX.sub(" ", value).strip()
       if not cleaned:
          continue
-      if token in {"track:0", "track:00"}:
-         extracted["track_number"] = _safe_int(cleaned)
-      elif token in {"medium:0", "medium:00"}:
-         extracted["disc_number"] = _safe_int(cleaned)
-      elif token == "artist name":
-         extracted["artist"] = cleaned
-      elif token == "album title":
-         extracted["album"] = cleaned
-      elif token == "track title":
-         extracted["title"] = cleaned
-      elif token == "release year":
-         extracted["year"] = cleaned
+      field_name = _LAYOUT_TOKEN_FIELD.get(token)
+      if field_name in ("track_number", "disc_number"):
+         extracted[field_name] = _safe_int(cleaned)
+      elif field_name:
+         extracted[field_name] = cleaned
    return extracted
 
 

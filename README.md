@@ -395,6 +395,8 @@ pyly "X:\Music" --recursive --layout "X:\Music\{Artist Name} - {Album Title}\{tr
 
 PyLy reads the values directly from the folder and file names, so even without tags it knows the artist is "Queen", the album is "A Night at the Opera", and the track is "Bohemian Rhapsody".
 
+The tokens are `{Artist Name}`, `{Album Title}` (`{Album Name}` also works), `{Track Title}`, `{track:00}` (track number, zero-padded), `{medium:00}` (disc number), and `{Release Year}`. A token PyLy doesn't recognise is **skipped with a warning** rather than silently guessed — so a typo like `{Album Naem}` leaves the album unknown instead of quietly filling it from the wrong folder (which, under `--match-file-metadata`, would otherwise overwrite a correct tag).
+
 ### Custom search queries
 
 You can also write the search query yourself using the same tokens:
