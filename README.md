@@ -221,10 +221,21 @@ pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch mus
 |---|---|
 | `lrclib` *(default)* | A free, open database of synced lyrics. Fast and simple. |
 | `musicbrainz` | Uses MusicBrainz to look up the canonical recording first, then fetches from lrclib using that cleaner metadata. Slower (about 2–3 seconds per track on the first pass), but more accurate for messy or unusual filenames. |
+| `lyricradar` | lyricradar.com's backend, which aggregates several sources and returns **synced** (timestamped) lyrics as well as plain text. Requires `--allow-provider-site-scraping`. Some sources are censored. |
+| `genius` | Genius.com, scraped from the song page. Plain (un-synced) lyrics, usually complete and uncensored. Requires `--allow-provider-site-scraping`. |
 
 **When to use `musicbrainz`:** If lrclib keeps returning wrong results — for example, a live version instead of the studio track, or a cover instead of the original — MusicBrainz's extra lookup step often gets it right. It also records a MusicBrainz ID inside the `.lrc` file, which is useful if you use other MusicBrainz-aware tools.
 
 Note that `musicbrainz` doesn't host lyrics itself. It just helps find the right entry in lrclib.
+
+**Scraping providers.** `lyricradar` and `genius` work by talking to a website's browser backend rather than a documented API, so they're off by default. Turn them on with `--allow-provider-site-scraping` only if you accept each site's terms of use:
+
+```
+pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch genius --allow-provider-site-scraping
+pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch lyricradar --keep-as-primary --allow-provider-site-scraping
+```
+
+Since `lyricradar` can return a synced `.lrc`, it pairs well with `--keep-as-primary`/`--keep-as-alternate`; `genius` is plain text, so it's best as a reference for aligning Whisper (`--fetch genius`).
 
 To see all available providers:
 

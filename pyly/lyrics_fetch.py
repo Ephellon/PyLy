@@ -1022,6 +1022,242 @@ def _log_warn(message: str, log_fn=None) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Scraping providers (require --allow-provider-site-scraping)
+#
+# These talk to a site's undocumented browser backend / embedded page state
+# rather than a public API, so they are gated behind the scraping opt-in.
+# ---------------------------------------------------------------------------
+
+_BROWSER_UA = (
+   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+   "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+)
+
+
+def _http_get_text(url: str, headers: dict, timeout: int = 15) -> str | None:
+   try:
+      req = urllib.request.Request(url, headers=headers)
+      with urllib.request.urlopen(req, timeout=timeout) as resp:
+         return resp.read().decode("utf-8", errors="replace")
+   except Exception:
+      return None
+
+
+def _http_get_json(url: str, headers: dict, timeout: int = 15) -> dict | None:
+   text = _http_get_text(url, headers, timeout)
+   if not text:
+      return None
+   try:
+      return json.loads(text)
+   except Exception:
+      return None
+
+
+# --- lyricradar.com (ls.1010diy.com backend) --------------------------------
+# Flow: /songs?keyword=<query> returns candidates, each with a `song_info`
+# string; /lyrics?keyword=<url-encoded song_info> returns {syncedLyrics,
+# plainLyrics}. The backend aggregates several sources (QQ Music, Kugou,
+# NetEase), so we take the first candidate that actually has lyrics.
+
+_LYRICRADAR_HEADERS = {
+   "Accept": "*/*",
+   "Origin": "https://lyricradar.com",
+   "Referer": "https://lyricradar.com/",
+   "User-Agent": _BROWSER_UA,
+}
+
+
+def _fetch_lyricradar(query: str, *, log_fn=None, **_kwargs) -> FetchedLyrics | None:
+   search_url = "https://ls.1010diy.com/songs?" + urllib.parse.urlencode({"keyword": query, "page": "1"})
+   data = _http_get_json(search_url, _LYRICRADAR_HEADERS)
+   results = (data or {}).get("data") or []
+   if not isinstance(results, list):
+      return None
+
+   for item in results[:6]:
+      if not isinstance(item, dict):
+         continue
+      song_info = item.get("song_info")
+      if not song_info:
+         continue
+      lyr_url = "https://ls.1010diy.com/lyrics?" + urllib.parse.urlencode({"keyword": song_info})
+      payload = _http_get_json(lyr_url, _LYRICRADAR_HEADERS)
+      entry = (payload or {}).get("data") or {}
+      synced = entry.get("syncedLyrics")
+      plain = entry.get("plainLyrics")
+      synced = synced if isinstance(synced, str) and synced.strip() else None
+      plain_lines = _text_to_lines(plain) if isinstance(plain, str) else None
+      if synced and not plain_lines:
+         plain_lines = _text_to_lines(synced)
+      if not synced and not plain_lines:
+         continue
+
+      artists = item.get("str_artist") or item.get("artist")
+      artist = ", ".join(artists) if isinstance(artists, list) else (artists or None)
+      duration = item.get("duration")
+      meta = TrackMeta(
+         artist=artist,
+         album=item.get("album"),
+         title=item.get("title"),
+         duration_s=(float(duration) / 1000.0) if isinstance(duration, (int, float)) and duration else None,
+      )
+      _log_info(f"lyricradar: matched {item.get('full_title')!r} ({item.get('source')})", log_fn=log_fn)
+      return FetchedLyrics(
+         synced_lrc_text=synced,
+         plain_text_lines=plain_lines,
+         provider="lyricradar",
+         query=query,
+         cache_hit=False,
+         meta=meta,
+      )
+   return None
+
+
+# --- genius.com -------------------------------------------------------------
+# Flow: /api/search/song?q=<query> returns song hits; the song page embeds
+# window.__PRELOADED_STATE__ = JSON.parse('...'), whose songPage.lyricsData.body
+# is a nested node tree. Flatten it to text, dropping ads and bracketed
+# section/credit headers ([Chorus], [Produced by ...]).
+
+_GENIUS_HEADERS = {"User-Agent": _BROWSER_UA, "Accept": "application/json, text/html"}
+_GENIUS_STATE_MARKER = "__PRELOADED_STATE__ = JSON.parse('"
+
+
+def _fetch_genius(query: str, *, log_fn=None, **_kwargs) -> FetchedLyrics | None:
+   search_url = "https://genius.com/api/search/song?" + urllib.parse.urlencode({"q": query})
+   data = _http_get_json(search_url, _GENIUS_HEADERS)
+   result = _genius_first_song(data)
+   if not result:
+      _log_warn("genius: no search result", log_fn=log_fn)
+      return None
+
+   url = result.get("url")
+   html = _http_get_text(url, _GENIUS_HEADERS, timeout=20) if url else None
+   body = _genius_extract_body(html) if html else None
+   lines = _genius_body_to_lines(body) if body else None
+   if not lines:
+      _log_warn(f"genius: no lyrics extracted for {url}", log_fn=log_fn)
+      return None
+
+   meta = TrackMeta(
+      url=url,
+      artist=(result.get("primary_artist") or {}).get("name"),
+      title=result.get("title"),
+   )
+   _log_info(f"genius: matched {result.get('full_title')!r}", log_fn=log_fn)
+   return FetchedLyrics(
+      synced_lrc_text=None,
+      plain_text_lines=lines,
+      provider="genius",
+      query=query,
+      cache_hit=False,
+      meta=meta,
+   )
+
+
+def _genius_first_song(data: dict | None) -> dict | None:
+   response = (data or {}).get("response") or {}
+   hits: list = []
+   sections = response.get("sections")
+   if isinstance(sections, list):
+      for section in sections:
+         hits.extend((section or {}).get("hits") or [])
+   else:
+      hits = response.get("hits") or []
+   for hit in hits:
+      result = (hit or {}).get("result") or {}
+      if result.get("url"):
+         return result
+   return None
+
+
+def _genius_extract_body(html: str):
+   idx = html.find(_GENIUS_STATE_MARKER)
+   if idx < 0:
+      return None
+   i = idx + len(_GENIUS_STATE_MARKER)
+   buf: list[str] = []
+   while i < len(html):
+      ch = html[i]
+      if ch == "\\":            # keep escape pairs intact for _js_unescape
+         buf.append(html[i:i + 2])
+         i += 2
+         continue
+      if ch == "'":             # unescaped quote ends the literal
+         break
+      buf.append(ch)
+      i += 1
+   try:
+      state = json.loads(_js_unescape("".join(buf)))
+   except Exception:
+      return None
+   return (((state.get("songPage") or {}).get("lyricsData") or {}).get("body"))
+
+
+def _js_unescape(s: str) -> str:
+   out: list[str] = []
+   i = 0
+   simple = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f",
+             "\\": "\\", "'": "'", '"': '"', "/": "/"}
+   while i < len(s):
+      ch = s[i]
+      if ch == "\\" and i + 1 < len(s):
+         nxt = s[i + 1]
+         if nxt == "u" and i + 6 <= len(s):
+            try:
+               out.append(chr(int(s[i + 2:i + 6], 16)))
+               i += 6
+               continue
+            except ValueError:
+               pass
+         elif nxt == "x" and i + 4 <= len(s):
+            try:
+               out.append(chr(int(s[i + 2:i + 4], 16)))
+               i += 4
+               continue
+            except ValueError:
+               pass
+         out.append(simple.get(nxt, nxt))
+         i += 2
+         continue
+      out.append(ch)
+      i += 1
+   return "".join(out)
+
+
+def _genius_body_to_lines(body) -> list[str] | None:
+   pieces: list[str] = []
+   _genius_flatten(body if isinstance(body, list) else (body or {}).get("children", []), pieces)
+   lines: list[str] = []
+   for raw in "".join(pieces).split("\n"):
+      line = raw.strip()
+      if not line:
+         continue
+      if re.fullmatch(r"\[.*\]", line):   # section / credit headers
+         continue
+      lines.append(line)
+   return lines or None
+
+
+def _genius_flatten(node, out: list[str]) -> None:
+   if isinstance(node, str):
+      out.append(node)
+   elif isinstance(node, list):
+      for child in node:
+         _genius_flatten(child, out)
+   elif isinstance(node, dict):
+      tag = node.get("tag")
+      if tag == "br":
+         out.append("\n")
+      elif tag == "inread-ad":
+         return
+      else:
+         children = node.get("children")
+         if children:
+            _genius_flatten(children, out)
+
+
+# ---------------------------------------------------------------------------
 # Provider registration
 # Placed at the bottom so all fetch functions are defined before we reference
 # them.  Add new providers here — nowhere else needs to change.
@@ -1045,13 +1281,21 @@ def _register_providers() -> None:
          fetch_fn=_fetch_musicbrainz,
       ),
       # --------------- scraping providers go below this line ---------------
-      # Example (not yet implemented):
-      # Provider(
-      #     name="genius",
-      #     description="Genius.com — plain lyrics via site scraping",
-      #     requires_scraping=True,
-      #     fetch_fn=_fetch_genius,
-      # ),
+      Provider(
+         name="lyricradar",
+         description=(
+            "lyricradar.com — multi-source lyrics (synced LRC + plain) via the "
+            "site's browser backend. May be censored depending on the source."
+         ),
+         requires_scraping=True,
+         fetch_fn=_fetch_lyricradar,
+      ),
+      Provider(
+         name="genius",
+         description="Genius.com — plain lyrics scraped from the song page",
+         requires_scraping=True,
+         fetch_fn=_fetch_genius,
+      ),
    ]
    for p in _entries:
       PROVIDER_REGISTRY[p.name] = p
