@@ -37,6 +37,11 @@ _LAYOUT_TOKEN_FIELD = {
 # Templates whose unrecognized tokens we've already warned about (warn once).
 _WARNED_LAYOUT_TEMPLATES: set[str] = set()
 
+# (file, template) pairs whose match result we've already reported. Several
+# stages (metadata check, lyrics lookup) infer from the same file in one run;
+# report the match once rather than once per caller.
+_REPORTED_LAYOUT_MATCHES: set[tuple[str, str]] = set()
+
 
 @dataclass(frozen=True)
 class PathGuess:
@@ -248,12 +253,17 @@ def infer_from_layout_template(audio_path: Path, layout: str) -> PathGuess:
 
    flags = re.IGNORECASE if os.name == "nt" else 0
    match = re.match(rx, normalized_path, flags=flags)
+   report_key = (normalized_path, layout)
+   first_report = report_key not in _REPORTED_LAYOUT_MATCHES
+   _REPORTED_LAYOUT_MATCHES.add(report_key)
    if not match:
-      print(info(f"layout template did not match: {audio_path.name}"))
+      if first_report:
+         print(info(f"layout template did not match: {audio_path.name}"))
       return base_guess
 
    extracted = _extract_layout_tokens(tokens, match)
-   print(info(f"layout template matched: {audio_path.name}"))
+   if first_report:
+      print(info(f"layout template matched: {audio_path.name}"))
    return _merge_path_guess(base_guess, extracted)
 
 
