@@ -5,6 +5,7 @@ import json
 import os
 import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -26,8 +27,9 @@ _LRC_TS_RX = re.compile(r"^\s*\[?\d{1,2}:\d{2}(?:\.\d+)?\]?\s*")
 
 # MusicBrainz requires a meaningful User-Agent:
 # https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting
-_MB_USER_AGENT = "PyLy/1.0 ( https://github.com/pyly )"
+_MB_USER_AGENT = "PyLy/1.0 ( https://github.com/Ephellon/PyLy )"
 _MB_RATE_LIMIT_S = 1.1  # MusicBrainz enforces ~1 req/sec per IP
+_MB_RETRIES = 4         # on 503/429: waits 2, 4, 8, 16 s (or Retry-After)
 
 
 # ---------------------------------------------------------------------------
@@ -509,12 +511,15 @@ _last_mb_request: float = 0.0
 
 
 def _mb_get(url: str) -> dict:
-   """Rate-limited GET to the MusicBrainz API (~1 req/sec enforced)."""
-   global _last_mb_request
-   elapsed = time.monotonic() - _last_mb_request
-   if elapsed < _MB_RATE_LIMIT_S:
-      time.sleep(_MB_RATE_LIMIT_S - elapsed)
+   """
+   Rate-limited GET to the MusicBrainz API (~1 req/sec enforced).
 
+   MusicBrainz answers 503 (and sometimes 429) when it is throttling; retry
+   those with backoff, honouring Retry-After, instead of failing the album.
+   The rate-limit clock is stamped on every attempt, failures included, so a
+   refused request can't be followed by an immediate one.
+   """
+   global _last_mb_request
    req = urllib.request.Request(
       url,
       headers={
@@ -522,10 +527,23 @@ def _mb_get(url: str) -> dict:
          "Accept": "application/json",
       },
    )
-   with urllib.request.urlopen(req, timeout=10) as resp:
-      payload = resp.read().decode("utf-8", errors="replace")
-   _last_mb_request = time.monotonic()
-   return json.loads(payload)
+   for attempt in range(_MB_RETRIES + 1):
+      elapsed = time.monotonic() - _last_mb_request
+      if elapsed < _MB_RATE_LIMIT_S:
+         time.sleep(_MB_RATE_LIMIT_S - elapsed)
+      try:
+         with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = resp.read().decode("utf-8", errors="replace")
+         return json.loads(payload)
+      except urllib.error.HTTPError as exc:
+         if exc.code not in (429, 503) or attempt == _MB_RETRIES:
+            raise
+         retry_after = exc.headers.get("Retry-After", "") if exc.headers else ""
+         wait = float(retry_after) if retry_after.isdigit() else 2.0 * (2 ** attempt)
+         time.sleep(min(wait, 60.0))
+      finally:
+         _last_mb_request = time.monotonic()
+   raise RuntimeError("unreachable")
 
 
 # ---------------------------------------------------------------------------
