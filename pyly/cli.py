@@ -157,7 +157,9 @@ def main(argv: list[str] | None = None) -> int:
 
    # Fetch
    ap.add_argument("--fetch", "-f", nargs="?", const="", default=None,
-                   help="Fetch base lyrics online (optional provider/template).")
+                   help=("Fetch base lyrics online (optional provider/template). A comma list "
+                         "(e.g. musicbrainz,musixmatch) is tried in order until one finds lyrics; "
+                         "with -k/-K, until one has synced lyrics."))
    ap.add_argument("--keep-as-primary", "-k", action="store_true",
                    help="Prefer fetched synced LRC when available (implies --fetch).")
    ap.add_argument("--keep-as-alternate", "-K", action="store_true",

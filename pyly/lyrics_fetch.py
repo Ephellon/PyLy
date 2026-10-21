@@ -118,10 +118,13 @@ def parse_fetch_arg(value: str | None, allow_scraping: bool = False) -> FetchCon
    if value is None:
       return None
 
+   # The provider part may be a comma-separated fallback chain
+   # ("musicbrainz,musixmatch"); it is kept as one normalized string and split
+   # by provider_chain().
    raw = value.strip()
    if ":" in raw:
       provider, template = raw.split(":", 1)
-      provider = provider.strip().lower() or DEFAULT_PROVIDER
+      provider = ",".join(_split_providers(provider)) or DEFAULT_PROVIDER
       template = template.strip() or DEFAULT_TEMPLATE
       return FetchConfig(True, provider=provider, template=template,
                          allow_scraping=allow_scraping)
@@ -130,14 +133,24 @@ def parse_fetch_arg(value: str | None, allow_scraping: bool = False) -> FetchCon
       return FetchConfig(True, provider=DEFAULT_PROVIDER, template=DEFAULT_TEMPLATE,
                          allow_scraping=allow_scraping)
 
-   lowered = raw.lower()
-   if lowered in PROVIDER_REGISTRY:
-      return FetchConfig(True, provider=lowered, template=DEFAULT_TEMPLATE,
+   names = _split_providers(raw)
+   if names and all(n in PROVIDER_REGISTRY for n in names):
+      return FetchConfig(True, provider=",".join(names), template=DEFAULT_TEMPLATE,
                          allow_scraping=allow_scraping)
 
    # Treat as a freetext query template for the default provider
    return FetchConfig(True, provider=DEFAULT_PROVIDER, template=raw,
                       allow_scraping=allow_scraping)
+
+
+def _split_providers(text: str) -> list[str]:
+   return [n.strip().lower() for n in text.split(",") if n.strip()]
+
+
+def provider_chain(config: FetchConfig) -> list[str]:
+   """Providers to try, in order (de-duplicated)."""
+   names = _split_providers(config.provider or "") or [DEFAULT_PROVIDER]
+   return list(dict.fromkeys(names))
 
 
 def expand_query(template: str, audio_path: Path, layout: str | None = None) -> str:
@@ -167,8 +180,38 @@ def fetch_lyrics_data(
    audio_path: Path,
    log_fn=None,
    layout: str | None = None,
+   prefer_synced: bool = False,
 ) -> FetchedLyrics | None:
-   provider_name = (config.provider or DEFAULT_PROVIDER).lower()
+   """
+   Try each provider in the --fetch chain in order; the first that returns
+   lyrics wins. With prefer_synced (--keep-as-primary/--keep-as-alternate),
+   a plain-text-only result is held back while later providers are asked
+   for synced lyrics, and returned only if none has them.
+   """
+   chain = provider_chain(config)
+   plain_fallback = None
+   for i, name in enumerate(chain):
+      fetched = _fetch_from_provider(config, name, audio_path, log_fn=log_fn, layout=layout)
+      if not fetched:
+         continue
+      if not prefer_synced or fetched.synced_lrc_text:
+         return fetched
+      if plain_fallback is None:
+         plain_fallback = fetched
+      if i + 1 < len(chain):
+         _log_info(f"FETCH: {name} has plain lyrics only; trying next provider for synced", log_fn=log_fn)
+   if plain_fallback is not None and len(chain) > 1:
+      _log_info(f"FETCH: no synced lyrics in chain; using plain lyrics from {plain_fallback.provider}", log_fn=log_fn)
+   return plain_fallback
+
+
+def _fetch_from_provider(
+   config: FetchConfig,
+   provider_name: str,
+   audio_path: Path,
+   log_fn=None,
+   layout: str | None = None,
+) -> FetchedLyrics | None:
    template = config.template or DEFAULT_TEMPLATE
    query = expand_query(template, audio_path, layout=layout)
    query = _repair_mojibake(query)

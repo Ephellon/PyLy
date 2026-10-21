@@ -229,6 +229,14 @@ pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch mus
 
 Note that `musicbrainz` doesn't host lyrics itself. It just helps find the right entry in lrclib.
 
+**Falling back to another provider.** List several providers, separated by commas, and PyLy tries them in order until one finds lyrics:
+
+```
+pyly "X:\Music\Queen\A Night at the Opera\03 I'm in Love with My Car.flac" --fetch musicbrainz,musixmatch --allow-provider-site-scraping
+```
+
+If `musicbrainz` finds nothing for `I'm in Love with My Car`, PyLy asks `musixmatch` next. With `--keep-as-primary` or `--keep-as-alternate` (which keep the fetched *synced* lyrics), PyLy also moves on when a provider only has plain text. Say `genius` returns plain lyrics for `Bohemian Rhapsody`: PyLy then asks `musixmatch` for synced ones, and falls back to the plain text only if nobody has synced lyrics. A custom search query applies to every provider in the list (`--fetch "musicbrainz,musixmatch:{Artist Name} {Track Title}"`), and each scraping provider in it still needs `--allow-provider-site-scraping`; without it, PyLy skips that provider and carries on with the rest.
+
 **Scraping providers.** `lyricradar`, `genius` and `musixmatch` work by talking to a website's browser backend rather than a documented API, so they're off by default. Turn them on with `--allow-provider-site-scraping` only if you accept each site's terms of use:
 
 ```
@@ -524,7 +532,7 @@ flowchart TD
 
 1. **Select files.** Resolve `<path>` (with `-r` for subfolders). This file list feeds every stage below.
 2. **Tidy metadata.** First `-n` fills in `album.nfo` from MusicBrainz, then `-Z` corrects the audio tags from it, then `-z` checks them. Doing this first means later steps see clean data — e.g. PyLy learns that `11 Bohemian Rhapsody.flac` should be titled *Bohemian Rhapsody* with a length of `5:55`.
-3. **Get reference lyrics.** `-F` first narrows *the lyrics pipeline only* to files whose existing `.lrc` was Whisper-made (the metadata steps above always see every file). Then reuse an embedded URL (`-R`), fetch online (`-f`), or read a local file (`-b`); `-k`/`-K` decide whether fetched synced lyrics become the output or a sidecar.
+3. **Get reference lyrics.** `-F` first narrows *the lyrics pipeline only* to files whose existing `.lrc` was Whisper-made (the metadata steps above always see every file). Then reuse an embedded URL (`-R`), fetch online (`-f`, asking each listed provider in turn), or read a local file (`-b`); `-k`/`-K` decide whether fetched synced lyrics become the output or a sidecar.
 4. **Transcribe.** Run Whisper to a `.srt` and reduce it — skipped when `-k` already supplied synced lyrics.
 5. **Align and patch.** Match the reference against Whisper's lines and apply the rescue/truth passes.
 6. **Write outputs.** Save `I'm in Love with My Car.lrc` and `Bohemian Rhapsody.lrc` (with header tags unless `-A`), plus a `.fetched.lrc` sidecar if `-K`.
@@ -555,7 +563,7 @@ enriches the `.nfo` from MusicBrainz, fixes the audio tags from it, then fetches
 | `--model <n>` | `-m` | Whisper model size: `tiny` `base` `small` `medium` `large`. Default: `small` |
 | `--language <code>` | `-l` | Force a language, e.g. `en`. Whisper auto-detects if omitted |
 | `--device <cpu\|cuda>` | `-d` | Run Whisper on CPU or GPU |
-| `--fetch [provider]` | `-f` | Fetch lyrics online to use as a reference. Providers: `lrclib` (default), `musicbrainz` |
+| `--fetch [provider[,provider…]]` | `-f` | Fetch lyrics online to use as a reference. Providers: `lrclib` (default), `musicbrainz`, `lyricradar`, `genius`, `musixmatch`. A comma list is tried in order until one finds lyrics (with `-k`/`-K`, until one has synced lyrics) |
 | `--keep-as-primary` | `-k` | Use fetched synced lyrics as the output; skip Whisper if available |
 | `--keep-as-alternate` | `-K` | Save fetched synced lyrics as `.fetched.lrc`; still generate Whisper output |
 | `--redownload` | `-R` | Re-fetch lyrics from the URL saved in existing `.lrc` files. Requires `--overwrite` to write |

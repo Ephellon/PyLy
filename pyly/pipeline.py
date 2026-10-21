@@ -231,11 +231,14 @@ def run_pipeline(
    # ------------------------------------------------------------------
    # Fetch online lyrics (for base alignment or primary/alternate modes)
    # ------------------------------------------------------------------
+   mode = (fetch_keep_mode or "").strip().lower() or None
+
    fetched = None
    if fetch_config and getattr(fetch_config, "enabled", False):
-      fetched = fetch_lyrics_data(fetch_config, audio_path, log_fn=_log, layout=layout)
-
-   mode = (fetch_keep_mode or "").strip().lower() or None
+      # primary/alternate keep the fetched synced LRC, so a provider chain
+      # should keep looking past plain-only hits.
+      fetched = fetch_lyrics_data(fetch_config, audio_path, log_fn=_log, layout=layout,
+                                  prefer_synced=mode in ("primary", "alternate"))
 
    if mode == "primary" and (not fetched or not fetched.synced_lrc_text):
       _log("FETCH MODE PRIMARY: no synced fetched lyrics; running Whisper pipeline")
