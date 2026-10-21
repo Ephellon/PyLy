@@ -203,6 +203,14 @@ def main(argv: list[str] | None = None) -> int:
          "Disabled by default. Only enable if you accept the provider's terms of use."
       ),
    )
+   ap.add_argument(
+      "--musixmatch-token", default=None, metavar="TOKEN",
+      help=(
+         "Login token for the musixmatch provider: the musixmatchUserToken cookie from a "
+         "logged-in musixmatch.com session (or one token from it), or a file holding it. "
+         "Default: $PYLY_MUSIXMATCH_TOKEN, then ~/.pyly/musixmatch-token."
+      ),
+   )
 
    # Find-better: only reprocess Whisper-transcribed .lrc files
    ap.add_argument(
@@ -256,6 +264,9 @@ def main(argv: list[str] | None = None) -> int:
 
    ns = ap.parse_args(argv)
    set_color_enabled(ns.color)
+   if ns.musixmatch_token:
+      from .lyrics_fetch import set_musixmatch_token
+      set_musixmatch_token(ns.musixmatch_token)
 
    # --list-providers: print registry and exit (no path needed)
    if ns.list_providers:

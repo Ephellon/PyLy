@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 import urllib.parse
@@ -18,6 +19,9 @@ import unicodedata
 
 DEFAULT_PROVIDER = "lrclib"
 DEFAULT_TEMPLATE = "{Artist Name} {Track Title}"
+# Providers that search by separate artist/album/title fields (filled from the
+# path guess) rather than by the freetext query alone.
+_STRUCTURED_PROVIDERS = ("musicbrainz", "musixmatch")
 _LRC_TS_RX = re.compile(r"^\s*\[?\d{1,2}:\d{2}(?:\.\d+)?\]?\s*")
 
 # MusicBrainz requires a meaningful User-Agent:
@@ -170,7 +174,7 @@ def fetch_lyrics_data(
    query = _repair_mojibake(query)
 
    # Enrich config with structured artist/title from path guess if not already set
-   if config.provider.lower() == "musicbrainz" and (not config.artist or not config.title):
+   if provider_name in _STRUCTURED_PROVIDERS and (not config.artist or not config.title):
       from .template_tokens import infer_path_guess
       guess = infer_path_guess(audio_path, layout)
       if guess.artist or guess.title:
@@ -180,6 +184,7 @@ def fetch_lyrics_data(
             template=config.template,
             allow_scraping=config.allow_scraping,
             artist=config.artist or guess.artist or None,
+            album=config.album or guess.album or None,
             title=config.title or guess.title or None,
          )
 
@@ -272,6 +277,8 @@ def fetch_by_url(url: str, log_fn=None) -> FetchedLyrics | None:
    try:
       if "lrclib.net" in url:
          fetched = _fetch_lrclib_by_url(url)
+      elif "musixmatch.com" in url:
+         fetched = _fetch_musixmatch_by_url(url, log_fn=log_fn)
       else:
          fetched = _fetch_raw_lrc_url(url)
    except Exception as exc:
@@ -289,7 +296,7 @@ def fetch_base_lyrics_lines(
    log_fn=None,
    layout: str | None = None,
 ) -> list[str] | None:
-   fetched = fetch_lyrics_data(config, audio_path, log_fn=log_fn, layout=layout, config=config)
+   fetched = fetch_lyrics_data(config, audio_path, log_fn=log_fn, layout=layout)
    if not fetched:
       return None
    return fetched.plain_text_lines
@@ -1257,6 +1264,259 @@ def _genius_flatten(node, out: list[str]) -> None:
             _genius_flatten(children, out)
 
 
+# --- musixmatch.com (apic.musixmatch.com app backend) -----------------------
+# Musixmatch serves decoy results (unrelated songs) to anonymous tokens, so a
+# token from a logged-in musixmatch.com session is required. The site keeps
+# its tokens in the `musixmatchUserToken` cookie as JSON keyed by app id
+# ({"tokens": {"mxm-com-v1.0": "2610...", ...}}); each token only works with
+# its own app id.
+#
+# Flow: matcher.track.get (artist/title/album) -> track.subtitle.get (LRC);
+# if the match has no synced lyrics, track.search for a version that does;
+# failing that, track.lyrics.get (plain). The [PyLy:<url>] tag stores a
+# token-free track.get URL so --redownload can find the same track again.
+
+_MXM_API = "https://apic.musixmatch.com/ws/1.1/"
+_MXM_APP_IDS = ("mxm-com-v1.0", "community-app-v1.0", "mxm-pro-web-v1.0", "mxm-account-v1.0")
+_MXM_TOKEN_ENV = "PYLY_MUSIXMATCH_TOKEN"
+_MXM_TOKEN_FILE = Path.home() / ".pyly" / "musixmatch-token"
+_MXM_MIN_INTERVAL_S = 0.5
+_MXM_HEADERS = {
+   "Accept": "application/json",
+   "Origin": "https://www.musixmatch.com",
+   "Referer": "https://www.musixmatch.com/",
+   "User-Agent": _BROWSER_UA,
+}
+
+_mxm_token_override: str | None = None
+_mxm_disabled_reason: str | None = None   # set once the token is rejected
+_mxm_last_call = 0.0
+
+
+def set_musixmatch_token(value: str | None) -> None:
+   """Token from --musixmatch-token (wins over the env var and token file)."""
+   global _mxm_token_override
+   _mxm_token_override = value or None
+
+
+def _mxm_credentials() -> tuple[str, str] | None:
+   """
+   Resolve (app_id, token). Sources, first found wins: --musixmatch-token,
+   $PYLY_MUSIXMATCH_TOKEN, ~/.pyly/musixmatch-token. Each may hold a bare
+   token, the `musixmatchUserToken` cookie (with or without the name, or the
+   whole Cookie header), or the path to a file holding any of those.
+   """
+   raw = _mxm_token_override or os.environ.get(_MXM_TOKEN_ENV)
+   if not raw and _MXM_TOKEN_FILE.is_file():
+      raw = _MXM_TOKEN_FILE.read_text(encoding="utf-8", errors="replace")
+   raw = (raw or "").strip()
+   if not raw:
+      return None
+   if "\n" not in raw and len(raw) < 260:
+      p = Path(raw).expanduser()
+      if p.is_file():
+         raw = p.read_text(encoding="utf-8", errors="replace").strip()
+   return _mxm_parse_token(raw)
+
+
+def _mxm_parse_token(raw: str) -> tuple[str, str] | None:
+   raw = urllib.parse.unquote(raw.strip())
+   start = raw.find("{")
+   if start >= 0:
+      # Cookie JSON: walk to its matching brace so other cookies can follow.
+      depth = 0
+      for end in range(start, len(raw)):
+         depth += {"{": 1, "}": -1}.get(raw[end], 0)
+         if depth == 0:
+            break
+      try:
+         tokens = (json.loads(raw[start:end + 1]) or {}).get("tokens") or {}
+      except Exception:
+         return None
+      for app_id in _MXM_APP_IDS:
+         if tokens.get(app_id):
+            return app_id, tokens[app_id]
+      return None
+   if re.fullmatch(r"[0-9a-fA-F]{40,64}", raw):
+      return _MXM_APP_IDS[0], raw
+   return None
+
+
+def _mxm_call(method: str, *, log_fn=None, **params) -> dict | None:
+   """Call one API method; returns the message body, or None on any miss."""
+   global _mxm_disabled_reason, _mxm_last_call
+   if _mxm_disabled_reason:
+      return None
+   creds = _mxm_credentials()
+   if not creds:
+      _mxm_disabled_reason = "no token"
+      _log_warn(
+         "musixmatch: no login token. Pass --musixmatch-token, set "
+         f"{_MXM_TOKEN_ENV}, or save the musixmatchUserToken cookie to {_MXM_TOKEN_FILE}",
+         log_fn=log_fn,
+      )
+      return None
+   app_id, token = creds
+   wait = _MXM_MIN_INTERVAL_S - (time.monotonic() - _mxm_last_call)
+   if wait > 0:
+      time.sleep(wait)
+   _mxm_last_call = time.monotonic()
+
+   query = {k: v for k, v in params.items() if v not in (None, "")}
+   query.update(app_id=app_id, usertoken=token, format="json")
+   data = _http_get_json(_MXM_API + method + "?" + urllib.parse.urlencode(query), _MXM_HEADERS)
+   message = (data or {}).get("message") or {}
+   header = message.get("header") or {}
+   status = header.get("status_code")
+   if status in (401, 402, 403) and method != "track.richsync.get":
+      # Expired/rejected token or a captcha wall: stop for the rest of the run.
+      _mxm_disabled_reason = f"status {status} {header.get('hint') or ''}".strip()
+      _log_warn(
+         f"musixmatch: token rejected ({_mxm_disabled_reason}); log in to "
+         "musixmatch.com again and refresh the musixmatchUserToken cookie",
+         log_fn=log_fn,
+      )
+      return None
+   body = message.get("body")
+   return body if status == 200 and isinstance(body, dict) else None
+
+
+_MXM_VARIANT_RX = re.compile(r"\b(live|remix|instrumental|acoustic|karaoke|demo|cover)\b", re.IGNORECASE)
+
+
+def _mxm_norm(s: str | None) -> str:
+   return re.sub(r"[^\w]+", " ", (s or "").casefold()).strip()
+
+
+def _mxm_sim(a: str | None, b: str | None) -> float:
+   from difflib import SequenceMatcher
+   na, nb = _mxm_norm(a), _mxm_norm(b)
+   if not na or not nb:
+      return 0.0
+   return SequenceMatcher(None, na, nb).ratio()
+
+
+def _mxm_artist_ok(wanted: str, got: str | None) -> bool:
+   # Containment covers "Queen" vs "Queen feat. X"; whole-string similarity
+   # alone is too forgiving (an album name scores 0.63 against a band name).
+   w, g = _mxm_norm(wanted), _mxm_norm(got)
+   return bool(w and g) and (w in g or g in w or _mxm_sim(w, g) >= 0.8)
+
+
+def _mxm_variant_penalty(wanted: str, got: str | None) -> float:
+   # A live/remix/instrumental take the request didn't ask for.
+   extra = set(m.lower() for m in _MXM_VARIANT_RX.findall(got or ""))
+   extra -= set(m.lower() for m in _MXM_VARIANT_RX.findall(wanted or ""))
+   return 0.5 if extra else 0.0
+
+
+def _fetch_musixmatch(query: str, *, log_fn=None, config: FetchConfig | None = None, **_kwargs) -> FetchedLyrics | None:
+   artist = config.artist if config else None
+   title = config.title if config else None
+   album = config.album if config else None
+
+   track = None
+   if artist and title:
+      body = _mxm_call("matcher.track.get", log_fn=log_fn, q_artist=artist, q_track=title, q_album=album)
+      track = (body or {}).get("track")
+      # The matcher can land on a compilation copy with no synced lyrics;
+      # look for another release of the same song that has them.
+      if not track or not track.get("has_subtitles"):
+         track = _mxm_search(log_fn, title, artist, album, q_artist=artist, q_track=title) or track
+   else:
+      track = _mxm_search(log_fn, query, None, None, q_track_artist=query)
+   if _mxm_disabled_reason or not track:
+      return None
+   found = f"{track.get('artist_name')!r} - {track.get('track_name')!r}"
+   if track.get("instrumental"):
+      _log_info(f"musixmatch: {found} is instrumental", log_fn=log_fn)
+      return None
+   if artist and title:
+      if not _mxm_artist_ok(artist, track.get("artist_name")) or _mxm_sim(title, track.get("track_name")) < 0.6:
+         _log_warn(f"musixmatch: best match {found} is not {artist!r} - {title!r}", log_fn=log_fn)
+         return None
+   elif _mxm_sim(query, f"{track.get('artist_name')} {track.get('track_name')}") < 0.6:
+      _log_warn(f"musixmatch: best match {found} does not fit {query!r}", log_fn=log_fn)
+      return None
+   return _mxm_track_lyrics(track, query, log_fn=log_fn)
+
+
+def _mxm_search(log_fn, title, artist, album, **q) -> dict | None:
+   """
+   Best track.search hit. With artist=None, `title` is the whole freetext
+   query and is scored against "artist title".
+   """
+   body = _mxm_call("track.search", log_fn=log_fn, f_has_lyrics="1",
+                    s_track_rating="desc", page_size="10", **q)
+   best, best_score = None, 0.0
+   for item in (body or {}).get("track_list") or []:
+      t = (item or {}).get("track") or {}
+      name = t.get("track_name")
+      if artist:
+         score = _mxm_sim(title, name) + _mxm_sim(artist, t.get("artist_name"))
+      else:
+         score = 2 * _mxm_sim(title, f"{t.get('artist_name')} {name}")
+      if album:
+         score += 0.25 * _mxm_sim(album, t.get("album_name"))
+      score += 0.5 if t.get("has_subtitles") else 0.0
+      score -= _mxm_variant_penalty(title, name)
+      if score > best_score:
+         best, best_score = t, score
+   return best
+
+
+def _mxm_track_lyrics(track: dict, query: str, *, log_fn=None) -> FetchedLyrics | None:
+   track_id = track.get("track_id")
+   synced = None
+   if track.get("has_subtitles"):
+      body = _mxm_call("track.subtitle.get", log_fn=log_fn, track_id=track_id, subtitle_format="lrc")
+      sub = (body or {}).get("subtitle") or {}
+      text = sub.get("subtitle_body")
+      if isinstance(text, str) and text.strip() and not sub.get("restricted"):
+         synced = text
+   plain_lines = _text_to_lines(synced) if synced else None
+   if not plain_lines and track.get("has_lyrics"):
+      body = _mxm_call("track.lyrics.get", log_fn=log_fn, track_id=track_id)
+      lyr = (body or {}).get("lyrics") or {}
+      if not lyr.get("restricted"):
+         # Drop the "******* This Lyrics is NOT for Commercial use *******"
+         # trailer (and its id line) that some responses carry.
+         lines = [ln for ln in _text_to_lines(lyr.get("lyrics_body"))
+                  if not re.fullmatch(r"\*+.*\*+|\(\d+\)", ln)]
+         plain_lines = lines or None
+   if not synced and not plain_lines:
+      return None
+
+   length = track.get("track_length")
+   meta = TrackMeta(
+      provider_id=str(track_id) if track_id else None,
+      url=f"{_MXM_API}track.get?track_id={track_id}" if track_id else None,
+      artist=track.get("artist_name"),
+      album=track.get("album_name"),
+      title=track.get("track_name"),
+      duration_s=float(length) if length else None,
+   )
+   kind = "synced" if synced else "plain"
+   _log_info(f"musixmatch: matched {meta.artist!r} - {meta.title!r} ({meta.album!r}, {kind})", log_fn=log_fn)
+   return FetchedLyrics(
+      synced_lrc_text=synced,
+      plain_text_lines=plain_lines,
+      provider="musixmatch",
+      query=query,
+      cache_hit=False,
+      meta=meta,
+   )
+
+
+def _fetch_musixmatch_by_url(url: str, *, log_fn=None) -> FetchedLyrics | None:
+   match = re.search(r"[?&]track_id=(\d+)", url)
+   if not match:
+      return None
+   body = _mxm_call("track.get", log_fn=log_fn, track_id=match.group(1))
+   track = (body or {}).get("track")
+   return _mxm_track_lyrics(track, url, log_fn=log_fn) if track else None
+
+
 # ---------------------------------------------------------------------------
 # Provider registration
 # Placed at the bottom so all fetch functions are defined before we reference
@@ -1295,6 +1555,15 @@ def _register_providers() -> None:
          description="Genius.com — plain lyrics scraped from the song page",
          requires_scraping=True,
          fetch_fn=_fetch_genius,
+      ),
+      Provider(
+         name="musixmatch",
+         description=(
+            "Musixmatch — synced LRC (falls back to plain) via the site's app "
+            "backend. Needs a musixmatch.com login token (--musixmatch-token)."
+         ),
+         requires_scraping=True,
+         fetch_fn=_fetch_musixmatch,
       ),
    ]
    for p in _entries:

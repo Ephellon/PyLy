@@ -223,19 +223,42 @@ pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch mus
 | `musicbrainz` | Uses MusicBrainz to look up the canonical recording first, then fetches from lrclib using that cleaner metadata. Slower (about 2–3 seconds per track on the first pass), but more accurate for messy or unusual filenames. |
 | `lyricradar` | lyricradar.com's backend, which aggregates several sources and returns **synced** (timestamped) lyrics as well as plain text. Requires `--allow-provider-site-scraping`. Some sources are censored. |
 | `genius` | Genius.com, scraped from the song page. Plain (un-synced) lyrics, usually complete and uncensored. Requires `--allow-provider-site-scraping`. |
+| `musixmatch` | Musixmatch, via the backend its own apps use. Large catalog of **synced** lyrics; falls back to plain text when a song has none. Requires `--allow-provider-site-scraping` **and** a musixmatch.com login token (see below). |
 
 **When to use `musicbrainz`:** If lrclib keeps returning wrong results — for example, a live version instead of the studio track, or a cover instead of the original — MusicBrainz's extra lookup step often gets it right. It also records a MusicBrainz ID inside the `.lrc` file, which is useful if you use other MusicBrainz-aware tools.
 
 Note that `musicbrainz` doesn't host lyrics itself. It just helps find the right entry in lrclib.
 
-**Scraping providers.** `lyricradar` and `genius` work by talking to a website's browser backend rather than a documented API, so they're off by default. Turn them on with `--allow-provider-site-scraping` only if you accept each site's terms of use:
+**Scraping providers.** `lyricradar`, `genius` and `musixmatch` work by talking to a website's browser backend rather than a documented API, so they're off by default. Turn them on with `--allow-provider-site-scraping` only if you accept each site's terms of use:
 
 ```
 pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch genius --allow-provider-site-scraping
 pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch lyricradar --keep-as-primary --allow-provider-site-scraping
 ```
 
-Since `lyricradar` can return a synced `.lrc`, it pairs well with `--keep-as-primary`/`--keep-as-alternate`; `genius` is plain text, so it's best as a reference for aligning Whisper (`--fetch genius`).
+Since `lyricradar` and `musixmatch` can return a synced `.lrc`, they pair well with `--keep-as-primary`/`--keep-as-alternate`; `genius` is plain text, so it's best as a reference for aligning Whisper (`--fetch genius`).
+
+**Musixmatch login token.** Musixmatch hands anonymous visitors deliberately wrong results (unrelated songs), so `musixmatch` needs a token from a logged-in session. To get one:
+
+1. Log in at [musixmatch.com](https://www.musixmatch.com) in your browser (a free account works).
+2. Open the browser's developer tools → **Application** (Chrome/Edge) or **Storage** (Firefox) → **Cookies** → `https://www.musixmatch.com`.
+3. Copy the value of the `musixmatchUserToken` cookie. It's a block of JSON starting with `{"tokens":`.
+
+Then give it to PyLy in any one of these ways (first one found wins):
+
+| Where | Example |
+|---|---|
+| `--musixmatch-token` | `--musixmatch-token "C:\Users\me\musixmatch-cookie.txt"` (a file holding the cookie), or the cookie/token itself |
+| `PYLY_MUSIXMATCH_TOKEN` environment variable | same value as the flag |
+| `~/.pyly/musixmatch-token` | a file holding the cookie; picked up automatically |
+
+PyLy accepts the cookie value as copied, `musixmatchUserToken=…`, a whole `Cookie:` header, or a single token from inside the JSON. Treat it like a password: it logs into your account, so keep it out of shared folders and repositories. PyLy never writes it into `.lrc` files or the cache.
+
+```
+pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch musixmatch --keep-as-primary --allow-provider-site-scraping
+```
+
+If Musixmatch rejects the token (it expired, or the site wants a captcha), PyLy warns once and stops asking Musixmatch for the rest of the run. Log in again and copy a fresh cookie.
 
 To see all available providers:
 
@@ -555,4 +578,5 @@ enriches the `.nfo` from MusicBrainz, fixes the audio tags from it, then fetches
 | `--lrc-header` | `-a` | Write metadata tags into the `.lrc` header (on by default) |
 | `--no-lrc-header` | `-A` | Don't write header tags |
 | `--allow-provider-site-scraping` | | Allow providers that work by scraping websites. Off by default |
+| `--musixmatch-token <token\|file>` | | Login token for `musixmatch` (the `musixmatchUserToken` cookie, or a file holding it). Default: `PYLY_MUSIXMATCH_TOKEN`, then `~/.pyly/musixmatch-token` |
 | `--color` / `--no-color` | | Force color output on or off |
