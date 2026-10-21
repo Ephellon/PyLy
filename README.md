@@ -425,7 +425,7 @@ pyly "X:\Music" --recursive --layout plex
 pyly "X:\Music" --recursive --layout flat
 ```
 
-`lidarr` and `plex` both expect an `Artist / Album / Track` folder structure, which is the most common. `flat` means all files are in one folder with no subfolders.
+`lidarr` and `plex` both expect an `Artist / Album / Track` folder structure, which is the most common. Leaving `--layout` out assumes the same structure, so `X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac` reads as artist `Queen`, album `A Night at the Opera`. `flat` means all files are in one folder with no subfolders. An unrecognized preset name prints a warning and falls back to `Artist / Album / Track`.
 
 ### Custom layout templates
 

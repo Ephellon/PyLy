@@ -37,6 +37,11 @@ _LAYOUT_TOKEN_FIELD = {
 # Templates whose unrecognized tokens we've already warned about (warn once).
 _WARNED_LAYOUT_TEMPLATES: set[str] = set()
 
+# Named --layout presets ("default" = no --layout given) and unknown preset
+# names we've already warned about.
+_LAYOUT_PRESETS = ("default", "lidarr", "plex", "flat")
+_WARNED_LAYOUT_PRESETS: set[str] = set()
+
 # (file, template) pairs whose match result we've already reported. Several
 # stages (metadata check, lyrics lookup) infer from the same file in one run;
 # report the match once rather than once per caller.
@@ -187,36 +192,21 @@ def infer_from_layout_preset(audio_path: Path, layout_key: str) -> PathGuess:
       title = _clean_title(stem)
       return PathGuess(title=title or "")
 
-   parent = audio_path.parent
-   grandparent = parent.parent if parent else None
-   artist = parent.name.strip() if parent else ""
-   album = grandparent.name.strip() if grandparent else ""
+   if layout_key not in _LAYOUT_PRESETS and layout_key not in _WARNED_LAYOUT_PRESETS:
+      _WARNED_LAYOUT_PRESETS.add(layout_key)
+      print(warn(f"layout: unknown preset '{layout_key}'; using Artist/Album/Track "
+                 f"(presets: {', '.join(sorted(_LAYOUT_PRESETS))})"))
+
+   # Every non-flat preset, and the no-hint default, reads Artist/Album/Track:
+   # grandparent folder = artist, parent folder = album. (The default used to
+   # read them the other way round, which made -Z swap artist and album on an
+   # ordinary Artist/Album tree whenever --layout was left out.)
+   parent = audio_path.resolve().parent
+   grandparent = parent.parent if parent != parent.parent else None
+   artist = grandparent.name.strip() if grandparent else ""
+   album = parent.name.strip()
    track_num, title = _parse_track_from_stem(stem)
    year = _guess_year(audio_path)
-
-   if layout_key == "lidarr":
-      artist = grandparent.name.strip() if grandparent else artist
-      album = parent.name.strip() if parent else album
-      return PathGuess(
-         artist=artist or "",
-         album=album or "",
-         title=title or _clean_title(stem),
-         track_number=track_num,
-         disc_number=None,
-         year=year or "",
-      )
-
-   if layout_key == "plex":
-      artist = grandparent.name.strip() if grandparent else artist
-      album = parent.name.strip() if parent else album
-      return PathGuess(
-         artist=artist or "",
-         album=album or "",
-         title=title or _clean_title(stem),
-         track_number=track_num,
-         disc_number=None,
-         year=year or "",
-      )
 
    return PathGuess(
       artist=artist or "",
