@@ -21,9 +21,9 @@ It runs your audio through [Whisper](https://github.com/openai/whisper) (an offl
 * [Cover art](#cover-art)
 * [Refreshing and upgrading lyrics](#refreshing-and-upgrading-lyrics)
 * [Settings file and profiles](#settings-file-and-profiles)
-* [How a run is ordered](#how-a-run-is-ordered)
+* [How a run is ordered](#how-a-run-is-ordered) *(advanced)*
 * [All flags](#all-flags)
-* [Moving from PyLy 1](#moving-from-pyly-1)
+* [Moving from PyLy 1](#moving-from-pyly-1) *(PyLy 1 users only)*
 * [ffmpeg](#ffmpeg)
 
 ---
@@ -250,10 +250,6 @@ This command checks every file in that folder and prints any mismatches between 
 2. **Folder layout** — otherwise the artist/album/track come from the folder structure. Use `--layout` to tell PyLy how your folders are arranged (same hint as `--get-lyrics`). When a `.nfo` is present, its own location is used to work out the structure, so this usually just works without a `--layout` flag.
 3. **Filename** — the track title falls back to the filename when the layout is `flat` or doesn't carry enough information.
 
-PyLy reads `.nfo` files leniently: the `<?xml?>` header is optional, XML entities and nested credits are handled, and malformed-but-common files (e.g. a stray `<rating: max=10>` tag) are still parsed. A `<artistdesc>`/`<biography>` block is treated as prose, never as the artist name. Mojibake in a tag (e.g. `Iâ€™m` for `I'm`, a common encoding accident) and characters a filename can't contain (`/ \ : * ? " < > |`) are normalised away, so they don't show up as phantom mismatches.
-
-Matching is **fuzzy** (Levenshtein edit distance), so small spelling and punctuation differences don't register as errors — `Superunknown (instrumental)` in a tag matches `Superunknown - Instrumental` from the `.nfo`, and a one-letter typo is forgiven. It still flags genuinely different titles. This also disambiguates **multi-disc albums**: when a track number repeats across discs (disc 1 *and* disc 2 both have a track 16), PyLy picks the `.nfo` entry whose title is closest to the file rather than defaulting to disc 1 — so `16 Superunknown - Instrumental` is checked against the instrumental, not disc 1's `16 She Likes Surprises`.
-
 **Strict vs loose.** The check takes an optional mode:
 
 ```
@@ -267,6 +263,14 @@ pyly "R:\Local\Queen\A Night at the Opera" --check-tags loose
 | `loose` | The tag **may** match the `.nfo` field **or** the folder layout, and trailing `(...)`/`[...]` qualifiers like `(Remastered 2011)`, `(Live)` or `(Bonus Track)` are ignored. |
 
 `loose` is handy when your `.nfo` files carry MusicBrainz medium/edition suffixes you don't keep in your tags.
+
+### Advanced: how tags are compared
+
+> **Advanced.** You can skip this part. It explains how PyLy compares tags; you don't need it to use `--check-tags` or `--fix-tags`.
+
+PyLy reads `.nfo` files leniently: the `<?xml?>` header is optional, XML entities and nested credits are handled, and malformed-but-common files (e.g. a stray `<rating: max=10>` tag) are still parsed. A `<artistdesc>`/`<biography>` block is treated as prose, never as the artist name. Mojibake in a tag (e.g. `Iâ€™m` for `I'm`, a common encoding accident) and characters a filename can't contain (`/ \ : * ? " < > |`) are normalised away, so they don't show up as phantom mismatches.
+
+Matching is **fuzzy** (Levenshtein edit distance), so small spelling and punctuation differences don't register as errors — `Superunknown (instrumental)` in a tag matches `Superunknown - Instrumental` from the `.nfo`, and a one-letter typo is forgiven. It still flags genuinely different titles. This also disambiguates **multi-disc albums**: when a track number repeats across discs (disc 1 *and* disc 2 both have a track 16), PyLy picks the `.nfo` entry whose title is closest to the file rather than defaulting to disc 1 — so `16 Superunknown - Instrumental` is checked against the instrumental, not disc 1's `16 She Likes Surprises`.
 
 ### Fix tags (writes tags)
 
@@ -497,6 +501,8 @@ pyly "R:\Local\Queen\A Night at the Opera" --profile nightly-lyrics
 
 ## How a run is ordered
 
+> **Advanced.** You can skip this section. PyLy always puts the steps in the right order for you; this explains what that order is.
+
 You can combine flags freely — PyLy always runs the work in the same sensible order, no matter what order you type them on the command line. Knowing that order helps you reason about a command before you run it.
 
 Picture this folder:
@@ -603,7 +609,9 @@ Flags are grouped by purpose. The **Letter** column shows the short form (if any
 | `--whisper-python` | (none) | the Python that has Whisper installed. Default: $PYLY_WHISPER_PYTHON, then the Python running PyLy. | (none) |
 | `--color` | (none) | colored output. Default: auto (on in a terminal). | auto |
 
-### Fine-tuning for matching reference lyrics (rarely used, no letters)
+### Advanced: fine-tuning the lyrics matching (no letters)
+
+> **Advanced.** You can skip this table. The defaults work for most people; these only change how closely Whisper's lines must match your reference lyrics.
 
 | Flag | Letter | What it does | Default |
 |---|---|---|---|
@@ -617,7 +625,7 @@ Flags are grouped by purpose. The **Letter** column shows the short form (if any
 
 ## Moving from PyLy 1
 
-Each PyLy 1 flag and what replaces it in PyLy 2.
+Only needed if you used PyLy 1 before. Each PyLy 1 flag and what replaces it in PyLy 2.
 
 | Old flag (PyLy 1) | New flag (PyLy 2) | Notes |
 |---|---|---|
