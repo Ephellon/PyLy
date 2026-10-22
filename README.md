@@ -704,6 +704,6 @@ pyly "X:\Music\Queen\A Night at the Opera" -n -Z -z -g
 | `--layout <hint>` | `-y` | Folder layout hint when tags are missing: `lidarr` `plex` `flat` or a custom template |
 | `--lrc-header` | `-a` | Write metadata tags into the `.lrc` header (on by default) |
 | `--no-lrc-header` | `-A` | Don't write header tags |
-| `--allow-provider-site-scraping` | | Allow providers that work by scraping websites. Off by default |
+| `--allow-provider-site-scraping` | `--apsss` | Allow providers that work by scraping websites. Off by default |
 | `--musixmatch-token <token\|file>` | | Login token for `musixmatch` (the `musixmatchUserToken` cookie, or a file holding it). Default: `PYLY_MUSIXMATCH_TOKEN`, then `~/.pyly/musixmatch-token` |
 | `--color` / `--no-color` | | Force color output on or off |

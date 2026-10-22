@@ -214,7 +214,8 @@ def main(argv: list[str] | None = None) -> int:
 
    # Provider scraping opt-in
    ap.add_argument(
-      "--allow-provider-site-scraping", action="store_true", default=False,
+      "--allow-provider-site-scraping", "--apsss", dest="allow_provider_site_scraping",
+      action="store_true", default=False,
       help=(
          "Allow lyric providers that work by scraping websites rather than using a documented API. "
          "Disabled by default. Only enable if you accept the provider's terms of use."
