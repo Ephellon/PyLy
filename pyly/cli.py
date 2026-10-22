@@ -124,7 +124,8 @@ def main(argv: list[str] | None = None) -> int:
    ap = argparse.ArgumentParser(prog="pyly", add_help=True)
    ap.add_argument("path", nargs="?", default=None, help="Audio file, .lrc file (for --redownload), or folder")
    ap.add_argument("--recursive", "-r", action="store_true", help="Recurse when path is a folder")
-   ap.add_argument("--overwrite", "-o", action="store_true", help="Overwrite existing .lrc")
+   ap.add_argument("--overwrite", "-o", action="store_true", help=("Overwrite existing output: .lrc files; album.nfo fields with -n; with -g, "
+                         "fetch from the provider even if a local image exists AND replace embedded art"))
    ap.add_argument("--clean", "-c", action="store_true", help="Delete intermediates after success")
    ap.add_argument("--dry-run", "-q", action="store_true", help="Print actions without running")
    ap.add_argument("--log", "-v", action="store_true", help="Write per-file .pyly.log")
@@ -264,6 +265,24 @@ def main(argv: list[str] | None = None) -> int:
       ),
    )
 
+   # Embed album cover art (metadata stage, after -Z and before -z)
+   from .cover_art import parse_embed_art_arg, DEFAULT_ART_PROVIDER
+   ap.add_argument(
+      "--embed-art", "-g", nargs="?", const=DEFAULT_ART_PROVIDER, default=None,
+      type=parse_embed_art_arg, metavar="PROVIDER[=KEY]",
+      help=(
+         "Embed album cover art into mp3/flac/m4a files. Without --overwrite: use a local "
+         "album|poster|default|cover|folder image (jpg/jpeg/png/webp/bmp/gif) from the file's "
+         "folder if there is one (no network), else fetch from PROVIDER; files that already "
+         "have embedded art are skipped. With --overwrite: fetch from PROVIDER even when a "
+         "local image exists (falling back to it if PROVIDER finds nothing), AND replace "
+         "existing embedded art. PROVIDER: musicbrainz (default), theaudiodb, apple, discogs, "
+         "spotify, youtube. KEY follows the first '=' (theaudiodb=KEY; spotify=ID:SECRET); "
+         "default $PYLY_<PROVIDER>_KEY, then ~/.pyly/<provider>-key. Keeps <file>.bak unless "
+         "-Z direct is also given. Put the path before -g."
+      ),
+   )
+
    ns = ap.parse_args(argv)
    set_color_enabled(ns.color)
    if ns.musixmatch_token:
@@ -280,6 +299,12 @@ def main(argv: list[str] | None = None) -> int:
       for p in providers:
          scraping_note = "  [requires --allow-provider-site-scraping]" if p.requires_scraping else ""
          print(f"    {p.name:<18} {p.description}{scraping_note}")
+      print()
+      from .cover_art import describe_art_providers
+      print("  Cover-art providers (--embed-art / -g):")
+      print()
+      for name, description in describe_art_providers():
+         print(f"    {name:<18} {description}")
       print()
       return 0
 
@@ -298,9 +323,10 @@ def main(argv: list[str] | None = None) -> int:
       ns.fetch = ""
 
    # ------------------------------------------------------------------
-   # Steps 1-2 — metadata grooming. When -n/-Z/-z are present they run first,
-   # in order: enrich the .nfo from MusicBrainz, fix the audio tags from it,
-   # then check. The run then flows into the lyrics pipeline (steps 3-7) only
+   # Steps 1-2 — metadata grooming. When -n/-Z/-g/-z are present they run
+   # first, in order: enrich the .nfo from MusicBrainz, fix the audio tags from
+   # it, embed cover art (using the fixed tags), then check. The run then flows
+   # into the lyrics pipeline (steps 3-7) only
    # when lyrics work was actually requested; a bare metadata command stops
    # here instead of transcribing every file. The final exit code is the worst
    # of every stage that ran.
@@ -320,7 +346,13 @@ def main(argv: list[str] | None = None) -> int:
    if match_mode is not None:
       strictness = ns.check_file_metadata or "strict"
       exit_codes.append(_run_file_metadata(ns, write_mode=match_mode, strictness=strictness))
-   elif ns.check_file_metadata:
+
+   if ns.embed_art is not None:
+      # -Z direct means "no backups"; anything else (including -Z copy, whose
+      # .tagged sidecar -g leaves alone) embeds in place with a .bak.
+      exit_codes.append(_run_embed_art(ns, write_mode="direct" if match_mode == "direct" else "backup"))
+
+   if match_mode is None and ns.check_file_metadata:
       exit_codes.append(_run_file_metadata(ns, write_mode=None, strictness=ns.check_file_metadata))
 
    lyrics_requested = bool(
@@ -665,6 +697,91 @@ def _run_file_metadata(ns, write_mode: str | None, strictness: str = "strict") -
    # as a check in scripts. In match mode, fixed files no longer count as bad.
    unresolved = (problem_count - fixed_count) if write_mode else problem_count
    return 0 if (unresolved == 0 and fail_count == 0) else 1
+
+
+def _run_embed_art(ns, write_mode: str) -> int:
+   """
+   Handle --embed-art: embed one cover per album folder into its audio files.
+
+   The image is resolved once per folder (local file, or a provider lookup)
+   and reused for every track in it. Without --overwrite, files that already
+   carry art are skipped first, so they cost no lookup at all.
+   """
+   from .cover_art import (
+      ArtResolver,
+      can_embed,
+      cannot_hold_art,
+      embed_cover,
+      has_embedded_art,
+      resolve_art_key,
+   )
+
+   try:
+      inputs = _collect_inputs([ns.path], ns.recursive)
+   except Exception as e:
+      print(f"[X] {e}", file=sys.stderr)
+      return 2
+
+   if not inputs:
+      print("[!] No supported audio files found.", file=sys.stderr)
+      return 1
+
+   spec = ns.embed_art
+   replacing = " — replacing existing art" if ns.overwrite else ""
+   banner(f"PyLy --embed-art ({spec.provider}){replacing} — {len(inputs)} file(s)")
+
+   resolver = ArtResolver(
+      spec.provider, resolve_art_key(spec.provider, spec.key),
+      overwrite=ns.overwrite, layout=ns.layout,
+   )
+   embedded = has_art = no_art = unsupported = fail = 0
+   warned_ogg = False
+
+   try:
+      for audio in inputs:
+         try:
+            if not can_embed(audio):
+               unsupported += 1
+               if cannot_hold_art(audio):
+                  if not warned_ogg:
+                     warned_ogg = True
+                     print(warn("ffmpeg can't write cover art into .ogg/.opus files; skipping them"))
+               else:
+                  print(warn(f"{audio.name}  (cover art not supported for {audio.suffix} — skipped)"))
+               continue
+
+            if not ns.overwrite and has_embedded_art(audio):
+               has_art += 1
+               print(ok(f"{audio.name}  (has art — skipped)"))
+               continue
+
+            art = resolver.resolve(audio)
+            if art is None:
+               no_art += 1
+               print(warn(f"{audio.name}  no art found"))
+               continue
+
+            changed, message = embed_cover(audio, art.image, mode=write_mode, dry_run=ns.dry_run)
+            if changed:
+               embedded += 1
+               verb = "would embed" if ns.dry_run else "embedded"
+               print(ok(f"{audio.name}  {verb} (source: {art.label})"))
+            else:
+               fail += 1
+               print(err(f"{audio.name}: {message}"))
+
+         except Exception as e:
+            fail += 1
+            print(err(f"{audio.name}: {e}"))
+   finally:
+      resolver.close()
+
+   verb = "WOULD EMBED" if ns.dry_run else "EMBEDDED"
+   banner(
+      f"{embedded} - {verb} / {has_art} - HAS ART / {no_art} - NO ART / "
+      f"{unsupported} - UNSUPPORTED / {fail} - FAIL"
+   )
+   return 0 if fail == 0 else 1
 
 
 def _run_update_nfo(ns) -> int:

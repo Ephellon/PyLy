@@ -720,16 +720,25 @@ def write_tags(
          os.replace(tmp, final)
          return True, f"wrote {final.name}: {summary}"
 
-      if mode == "backup":
-         bak = audio_path.with_name(audio_path.name + ".bak")
-         if not bak.exists():
-            shutil.copy2(audio_path, bak)
-      os.replace(tmp, final)
+      replace_with_backup(audio_path, tmp, mode)
       return True, f"set {summary} (mode={mode})"
 
    except Exception as exc:
       _cleanup(tmp)
       return False, f"write error: {exc}"
+
+
+def replace_with_backup(audio_path: Path, tmp: Path, mode: str = "backup") -> None:
+   """
+   Move a rewritten ``tmp`` over ``audio_path``. In backup mode the original
+   is first copied to <file>.<ext>.bak — once: an existing .bak is the
+   pristine original from an earlier write and is never overwritten.
+   """
+   if mode == "backup":
+      bak = audio_path.with_name(audio_path.name + ".bak")
+      if not bak.exists():
+         shutil.copy2(audio_path, bak)
+   os.replace(tmp, audio_path)
 
 
 def _cleanup(path: Path) -> None:
