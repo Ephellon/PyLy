@@ -7,99 +7,10 @@ from .pipeline import run_pipeline
 from .console_ui import LiveStatus, banner, ok, err, warn, info, RollingETA, format_duration, set_color_enabled
 
 
-AUDIO_EXTS = {
-   ".mp3", ".flac", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".alac", ".wma", ".aiff"
-}
-
-
-def _is_audio_file(path: Path) -> bool:
-   return path.is_file() and path.suffix.lower() in AUDIO_EXTS
-
-
-def _collect_inputs(
-   inputs: list[str | Path],
-   recursive: bool = False,
-) -> list[Path]:
-   """
-   Resolve CLI inputs into a sorted list of audio files.
-
-   Rules:
-   - Files are accepted only if they are known audio types
-   - Directories yield audio files inside them
-   - --recursive controls deep traversal
-   - Duplicates are removed
-   - Output is deterministic
-   """
-
-   results: set[Path] = set()
-
-   for raw in inputs:
-      p = Path(raw).expanduser()
-
-      if "*" in str(p) or "?" in str(p):
-         for gp in p.parent.glob(p.name):
-            if gp.is_dir():
-               if recursive:
-                  for f in gp.rglob("*"):
-                     if _is_audio_file(f):
-                        results.add(f.resolve())
-               else:
-                  for f in gp.iterdir():
-                     if _is_audio_file(f):
-                        results.add(f.resolve())
-            elif _is_audio_file(gp):
-               results.add(gp.resolve())
-         continue
-
-      if not p.exists():
-         raise FileNotFoundError(f"Input not found: {p}")
-
-      if p.is_file():
-         if _is_audio_file(p):
-            results.add(p.resolve())
-         else:
-            raise ValueError(f"Not an audio file: {p}")
-         continue
-
-      if p.is_dir():
-         if recursive:
-            for f in p.rglob("*"):
-               if _is_audio_file(f):
-                  results.add(f.resolve())
-         else:
-            for f in p.iterdir():
-               if _is_audio_file(f):
-                  results.add(f.resolve())
-         continue
-
-   return sorted(results)
-
-
-def _collect_lrc_inputs(
-   inputs: list[str | Path],
-   recursive: bool = False,
-) -> list[Path]:
-   """Collect .lrc files from the given paths."""
-   results: set[Path] = set()
-
-   for raw in inputs:
-      p = Path(raw).expanduser()
-
-      if not p.exists():
-         raise FileNotFoundError(f"Input not found: {p}")
-
-      if p.is_file():
-         if p.suffix.lower() == ".lrc":
-            results.add(p.resolve())
-         else:
-            raise ValueError(f"Not an .lrc file: {p}")
-         continue
-
-      if p.is_dir():
-         for f in (p.rglob("*.lrc") if recursive else p.glob("*.lrc")):
-            results.add(f.resolve())
-
-   return sorted(results)
+from .inputs import (
+   AUDIO_EXTS, is_audio_file as _is_audio_file,
+   collect_audio_files as _collect_inputs, collect_lrc_files as _collect_lrc_inputs,
+)
 
 
 def _configure_stdio() -> None:
