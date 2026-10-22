@@ -292,6 +292,16 @@ pyly "X:\Music" --recursive --redownload --overwrite
 
 You can point this at a single `.lrc` file, a single audio file (PyLy will find the matching `.lrc`), or a whole folder. Without `--overwrite`, it's a dry run — PyLy checks whether new lyrics are available but doesn't save anything, which is useful for testing before committing to a bulk update.
 
+### Upgrading Whisper-made lyrics to fetched ones
+
+`--redownload` only helps files that already came from a provider. For files Whisper transcribed, ask the providers again without ever re-running Whisper:
+
+```
+pyly "X:\Music\Queen\A Night at the Opera" --find-better --overwrite --keep-as-primary --fetch-only --fetch musicbrainz,musixmatch --allow-provider-site-scraping
+```
+
+`--find-better` picks only the Whisper-made `.lrc` files, `--overwrite` lets a fetched version replace them, and `--fetch-only` means a track no provider has synced lyrics for (say `I'm in Love with My Car`) is skipped and keeps its Whisper `.lrc`, instead of being transcribed again.
+
 ---
 
 ## Checking and fixing file tags
@@ -649,15 +659,17 @@ pyly "X:\Music\Queen\A Night at the Opera" -n -Z -z -g
 | `--model <n>` | `-m` | Whisper model size: `tiny` `base` `small` `medium` `large`. Default: `small` |
 | `--language <code>` | `-l` | Force a language, e.g. `en`. Whisper auto-detects if omitted |
 | `--device <cpu\|cuda>` | `-d` | Run Whisper on CPU or GPU |
+| `--whisper-python <python>` | | The Python that runs Whisper (needs `openai-whisper` + `torch`). Default: `PYLY_WHISPER_PYTHON`, then the Python running PyLy. PyLy checks once per run and stops with a clear error if Whisper can't be imported |
 | `--fetch [provider[,provider…]]` | `-f` | Fetch lyrics online to use as a reference. Providers: `lrclib` (default), `musicbrainz`, `lyricradar`, `genius`, `musixmatch`. A comma list is tried in order until one finds lyrics (with `-k`/`-K`, until one has synced lyrics) |
 | `--keep-as-primary` | `-k` | Use fetched synced lyrics as the output; skip Whisper if available |
 | `--keep-as-alternate` | `-K` | Save fetched synced lyrics as `.fetched.lrc`; still generate Whisper output |
+| `--fetch-only` | | Never run Whisper. With `-k`, write fetched synced lyrics when a provider has them; otherwise skip the file and leave any existing `.lrc` untouched. Requires `-k` |
 | `--redownload` | `-R` | Re-fetch lyrics from the URL saved in existing `.lrc` files. Requires `--overwrite` to write |
 | `--list-providers` | `-p` | Print available lyric and cover-art providers and exit |
 | `--find-better` | `-F` | Limit the **lyrics pipeline** to audio files whose existing `.lrc` was Whisper-transcribed (no external URL tag). Useful with `--fetch` to upgrade Whisper-only files. Does not affect the metadata steps (`-n`/`-Z`/`-z`) |
 | `--check-file-metadata [mode]` | `-z` | Report files whose embedded tags (title, artist, album, year, track) don't match `album.nfo`/`artist.nfo` / the folder layout / the filename. `mode`: `strict` (default) or `loose` (also accepts the folder layout and ignores trailing `(...)` qualifiers). Read-only |
 | `--match-file-metadata [mode]` | `-Z` | Fix mismatched tags by writing the expected values into the file. `mode`: `backup` (default, keeps a `.bak`), `direct`, or `copy`. With `--embed-art`, one of only two flags that modify your audio |
-| `--update-nfo` | `-n` | Fill missing `album.nfo` data (album artist, year, barcode, full track list) by looking up its embedded MusicBrainz id. Non-destructive unless `--overwrite`; backs up `album.nfo.bak`; honours `--dry-run` |
+| `--update-nfo` | `-n` | Fill missing `album.nfo` data (album artist, year, barcode, full track list) by looking up its embedded MusicBrainz id. Non-destructive unless `--overwrite`; backs up `album.nfo.bak`; honours `--dry-run`. Never creates an `album.nfo`; a folder without one is reported and is not an error (exit code 0) |
 | `--embed-art [provider[=key]]` | `-g` | Embed album cover art into `mp3`/`flac`/`m4a` files. Uses a local `album`/`poster`/`default`/`cover`/`folder` image if the folder has one (no network), else the provider; skips files that already have art. With `-o`: provider first (local image as fallback) and existing art replaced. Providers: `musicbrainz` (default), `theaudiodb`, `apple`, `discogs`, `spotify`, `youtube`. The key follows the first `=`; default `PYLY_<PROVIDER>_KEY`, then `~/.pyly/<provider>-key`. Keeps a `.bak` unless `-Z direct`. Put the path first. See [Embedding cover art](#embedding-cover-art) |
 | `--base <file>` | `-b` | Plain text lyrics file to use as a reference |
 | `--lyrics <file>` | | Alias for `--base` |

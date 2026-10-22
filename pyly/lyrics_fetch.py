@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -507,7 +508,28 @@ def _extract_synced_lrc_text(item: dict) -> str | None:
 # ---------------------------------------------------------------------------
 
 _MB_SEARCH_URL = "https://musicbrainz.org/ws/2/recording"
-_last_mb_request: float = 0.0
+_last_mb_request: float = 0.0   # wall clock (time.time), shared via _MB_STAMP_FILE
+# The last-request time is also kept in a temp file, so back-to-back PyLy
+# processes (e.g. a script running one album per process) respect the same
+# ~1 req/s limit instead of each starting with a fresh clock.
+_MB_STAMP_FILE = Path(tempfile.gettempdir()) / "pyly-musicbrainz-last-request"
+
+
+def _mb_last_request() -> float:
+   try:
+      shared = float(_MB_STAMP_FILE.read_text(encoding="ascii").strip() or 0)
+   except (OSError, ValueError):
+      shared = 0.0
+   return max(_last_mb_request, shared)
+
+
+def _mb_stamp() -> None:
+   global _last_mb_request
+   _last_mb_request = time.time()
+   try:
+      _MB_STAMP_FILE.write_text(f"{_last_mb_request:.3f}", encoding="ascii")
+   except OSError:
+      pass
 
 
 def _mb_get(url: str) -> dict:
@@ -519,7 +541,6 @@ def _mb_get(url: str) -> dict:
    The rate-limit clock is stamped on every attempt, failures included, so a
    refused request can't be followed by an immediate one.
    """
-   global _last_mb_request
    req = urllib.request.Request(
       url,
       headers={
@@ -528,8 +549,8 @@ def _mb_get(url: str) -> dict:
       },
    )
    for attempt in range(_MB_RETRIES + 1):
-      elapsed = time.monotonic() - _last_mb_request
-      if elapsed < _MB_RATE_LIMIT_S:
+      elapsed = time.time() - _mb_last_request()
+      if 0 <= elapsed < _MB_RATE_LIMIT_S:
          time.sleep(_MB_RATE_LIMIT_S - elapsed)
       try:
          with urllib.request.urlopen(req, timeout=10) as resp:
@@ -542,7 +563,7 @@ def _mb_get(url: str) -> dict:
          wait = float(retry_after) if retry_after.isdigit() else 2.0 * (2 ** attempt)
          time.sleep(min(wait, 60.0))
       finally:
-         _last_mb_request = time.monotonic()
+         _mb_stamp()
    raise RuntimeError("unreachable")
 
 

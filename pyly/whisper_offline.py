@@ -83,6 +83,45 @@ def _is_progress_spam(line: str) -> bool:
    return False
 
 
+# Interpreter that runs `-m whisper`. PyLy itself needs only the stdlib, so it
+# often runs under a Python that lacks Whisper/torch; point this at one that
+# has them. Order: set_whisper_python() (--whisper-python), then
+# $PYLY_WHISPER_PYTHON, then the Python running PyLy.
+_WHISPER_PYTHON_ENV = "PYLY_WHISPER_PYTHON"
+_whisper_python_override: str | None = None
+_whisper_checked: dict[str, str | None] = {}   # interpreter -> error (None = ok)
+
+
+def set_whisper_python(path: str | None) -> None:
+   global _whisper_python_override
+   _whisper_python_override = path or None
+
+
+def _whisper_python() -> str:
+   return _whisper_python_override or os.environ.get(_WHISPER_PYTHON_ENV) or sys.executable
+
+
+def _check_whisper_importable(python: str) -> None:
+   """
+   Fail fast, once per run, when the interpreter can't import whisper —
+   rather than letting every file spend seconds on a doomed subprocess.
+   """
+   if python not in _whisper_checked:
+      try:
+         proc = subprocess.run([python, "-c", "import whisper"], capture_output=True,
+                               text=True, encoding="utf-8", errors="replace", timeout=120)
+         err = None if proc.returncode == 0 else (proc.stderr.strip().splitlines() or ["import failed"])[-1]
+      except (OSError, subprocess.TimeoutExpired) as exc:
+         err = str(exc)
+      _whisper_checked[python] = err
+   err = _whisper_checked[python]
+   if err:
+      raise RuntimeError(
+         f"Whisper is not usable with {python} ({err}). Install openai-whisper there, or point "
+         f"--whisper-python / {_WHISPER_PYTHON_ENV} at a Python that has it."
+      )
+
+
 def whisper_to_srt(
    audio_path: Path,
    output_dir: Path,
@@ -102,12 +141,14 @@ def whisper_to_srt(
    if not audio_path.exists():
       raise FileNotFoundError(str(audio_path))
 
+   _check_whisper_importable(_whisper_python())
+
    output_dir.mkdir(parents=True, exist_ok=True)
 
    out_srt = output_dir / (audio_path.stem + ".srt")
 
    cmd: list[str] = [
-      sys.executable, "-m", "whisper",
+      _whisper_python(), "-m", "whisper",
       str(audio_path),
       "--task", "transcribe",
       "--model", str(model),

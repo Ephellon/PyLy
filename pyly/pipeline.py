@@ -106,6 +106,9 @@ def run_pipeline(
 
    # URL re-download
    redownload: bool = False,
+
+   # never fall back to Whisper (--fetch-only)
+   fetch_only: bool = False,
 ) -> dict[str, str]:
    """
    Process a single audio file:
@@ -241,6 +244,10 @@ def run_pipeline(
                                   prefer_synced=mode in ("primary", "alternate"))
 
    if mode == "primary" and (not fetched or not fetched.synced_lrc_text):
+      if fetch_only:
+         _log("FETCH ONLY: no synced fetched lyrics; skipped (Whisper disabled)")
+         print(info(f"FETCH ONLY: no synced fetched LRC; skipped ({out_lrc.name})"))
+         return {"status": "skipped", "lrc": str(out_lrc), "reason": "no synced fetched lyrics (--fetch-only)"}
       _log("FETCH MODE PRIMARY: no synced fetched lyrics; running Whisper pipeline")
       print(info("PRIMARY: no synced fetched LRC; continuing with Whisper pipeline"))
 

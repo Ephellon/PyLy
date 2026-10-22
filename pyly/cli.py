@@ -163,6 +163,20 @@ def main(argv: list[str] | None = None) -> int:
                          "with -k/-K, until one has synced lyrics."))
    ap.add_argument("--keep-as-primary", "-k", action="store_true",
                    help="Prefer fetched synced LRC when available (implies --fetch).")
+   ap.add_argument(
+      "--fetch-only", action="store_true", default=False,
+      help=(
+         "Never run Whisper: write fetched synced lyrics when a provider has them, otherwise "
+         "skip the file and leave any existing .lrc alone. Requires --keep-as-primary."
+      ),
+   )
+   ap.add_argument(
+      "--whisper-python", default=None, metavar="PYTHON",
+      help=(
+         "Python interpreter that runs Whisper (one with openai-whisper + torch installed). "
+         "Default: $PYLY_WHISPER_PYTHON, then the Python running PyLy."
+      ),
+   )
    ap.add_argument("--keep-as-alternate", "-K", action="store_true",
                    help="Keep fetched synced LRC as <basename>.fetched.lrc (implies --fetch).")
    ap.add_argument(
@@ -319,6 +333,15 @@ def main(argv: list[str] | None = None) -> int:
       print("[X] --keep-as-primary and --keep-as-alternate are mutually exclusive.", file=sys.stderr)
       return 2
 
+   if ns.fetch_only and not ns.keep_as_primary:
+      print("[X] --fetch-only needs --keep-as-primary (-k): it writes fetched synced lyrics "
+            "and never falls back to Whisper.", file=sys.stderr)
+      return 2
+
+   if ns.whisper_python:
+      from .whisper_offline import set_whisper_python
+      set_whisper_python(ns.whisper_python)
+
    if (ns.keep_as_primary or ns.keep_as_alternate) and ns.fetch is None:
       ns.fetch = ""
 
@@ -446,6 +469,7 @@ def main(argv: list[str] | None = None) -> int:
             fetch_config=fetch_config,
             fetch_keep_mode="primary" if ns.keep_as_primary else ("alternate" if ns.keep_as_alternate else None),
             layout=ns.layout,
+            fetch_only=ns.fetch_only,
          )
          dt = time.time() - t0
 
@@ -814,8 +838,10 @@ def _run_update_nfo(ns) -> int:
       return 2
 
    if not nfo_files:
-      print("[!] No album.nfo files found.", file=sys.stderr)
-      return 1
+      # Nothing to enrich is not a failure: -n never creates an album.nfo, and a
+      # caller looping over albums shouldn't see an error for one that has none.
+      print("(i) No album.nfo files found; nothing to update.")
+      return 0
 
    banner(f"PyLy --update-nfo — {len(nfo_files)} album.nfo file(s)")
 

@@ -1,5 +1,7 @@
 @echo off
-setlocal EnableExtensions EnableDelayedExpansion
+REM Delayed expansion stays OFF: with it on, cmd strips "!" from %* and from
+REM paths such as R:\Local\Russ\W!LD before python ever sees them.
+setlocal EnableExtensions DisableDelayedExpansion
 
 REM --------------------------------------------
 REM PyLy launcher / bootstrapper
