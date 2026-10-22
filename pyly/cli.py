@@ -223,9 +223,11 @@ def main(argv: list[str] | None = None) -> int:
    ap.add_argument(
       "--musixmatch-token", default=None, metavar="TOKEN",
       help=(
-         "Login token for the musixmatch provider: the musixmatchUserToken cookie from a "
-         "logged-in musixmatch.com session (or one token from it), or a file holding it. "
-         "Default: $PYLY_MUSIXMATCH_TOKEN, then ~/.pyly/musixmatch-token."
+         "Login for the musixmatch provider: the Value of the browser cookie named "
+         "musixmatchUserToken on musixmatch.com while logged in (JSON like "
+         "{\"tokens\":{...},\"version\":1}), or a file holding it. Easiest: save it to "
+         "~/.pyly/musixmatch-token and omit this flag. Default: $PYLY_MUSIXMATCH_TOKEN, then "
+         "that file. See README 'Musixmatch login token'."
       ),
    )
 

@@ -250,18 +250,38 @@ Since `lyricradar` and `musixmatch` can return a synced `.lrc`, they pair well w
 **Musixmatch login token.** Musixmatch hands anonymous visitors deliberately wrong results (unrelated songs), so `musixmatch` needs a token from a logged-in session. To get one:
 
 1. Log in at [musixmatch.com](https://www.musixmatch.com) in your browser (a free account works).
-2. Open the browser's developer tools → **Application** (Chrome/Edge) or **Storage** (Firefox) → **Cookies** → `https://www.musixmatch.com`.
-3. Copy the value of the `musixmatchUserToken` cookie. It's a block of JSON starting with `{"tokens":`.
+2. Press **F12** to open the developer tools, then go to **Application** (Chrome/Edge) or **Storage** (Firefox) → **Cookies** → `https://www.musixmatch.com`.
+3. Find the row whose **Name** is `musixmatchUserToken` and copy its **Value**: the whole thing, braces included. It's one long line of JSON listing about two dozen tokens, and looks like this (shortened, values made up):
 
-Then give it to PyLy in any one of these ways (first one found wins):
+   ```
+   {"tokens":{"mxm-account-v1.0":"2610ab12…","mxm-com-v1.0":"2610cd34…","community-app-v1.0":"2610ef56…", … },"version":1}
+   ```
 
-| Where | Example |
-|---|---|
-| `--musixmatch-token` | `--musixmatch-token "C:\Users\me\musixmatch-cookie.txt"` (a file holding the cookie), or the cookie/token itself |
-| `PYLY_MUSIXMATCH_TOKEN` environment variable | same value as the flag |
-| `~/.pyly/musixmatch-token` | a file holding the cookie; picked up automatically |
+4. Paste that into a plain-text file at `~/.pyly/musixmatch-token` (on Windows, `C:\Users\<you>\.pyly\musixmatch-token`, no file extension). PyLy reads it from there automatically, with no flag needed.
 
-PyLy accepts the cookie value as copied, `musixmatchUserToken=…`, a whole `Cookie:` header, or a single token from inside the JSON. Treat it like a password: it logs into your account, so keep it out of shared folders and repositories. PyLy never writes it into `.lrc` files or the cache.
+That's all most people need. In detail:
+
+- **What PyLy uses:** the `mxm-com-v1.0` token from that JSON (falling back to `community-app-v1.0`, `mxm-pro-web-v1.0`, then `mxm-account-v1.0` if it's missing). The other tokens are ignored.
+- **Other forms it accepts**, all treated the same, so paste whichever you have:
+
+  | You copied… | Looks like |
+  |---|---|
+  | the cookie's value (recommended) | `{"tokens":{…},"version":1}` |
+  | the cookie with its name | `musixmatchUserToken={"tokens":{…},"version":1}` |
+  | the browser's whole `Cookie` header (Network tab → any request → Request Headers → `cookie`) | `show-pro-banner=false; musixmatchUserToken={…}; …` |
+  | just one token: the text inside the quotes after `"mxm-com-v1.0":` | `2610cd34…` (52 letters and digits starting with `2610`) |
+
+- **Where else it can go** (first one found wins):
+
+  | Where | Example |
+  |---|---|
+  | `--musixmatch-token` | `--musixmatch-token "C:\Users\me\musixmatch-cookie.txt"` (a file holding any form above), or the value itself in single quotes: `--musixmatch-token '{"tokens":{…},"version":1}'` |
+  | `PYLY_MUSIXMATCH_TOKEN` environment variable | any form above, or a path to a file holding it |
+  | `~/.pyly/musixmatch-token` | a file holding any form above; picked up automatically |
+
+  The JSON is full of `"` and `{}` characters that shells mangle, so a file is the easiest route.
+
+Treat this value like a password: anyone holding it is logged in as you, so keep it out of shared folders and repositories. PyLy never writes it into `.lrc` files, logs or the cache. If Musixmatch says the token is missing, check that the file isn't saved as `musixmatch-token.txt`, which Windows does by default when "hide extensions" is on.
 
 ```
 pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch musixmatch --keep-as-primary --allow-provider-site-scraping
