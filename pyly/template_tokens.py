@@ -199,7 +199,7 @@ def infer_from_layout_preset(audio_path: Path, layout_key: str) -> PathGuess:
 
    # Every non-flat preset, and the no-hint default, reads Artist/Album/Track:
    # grandparent folder = artist, parent folder = album. (The default used to
-   # read them the other way round, which made -Z swap artist and album on an
+   # read them the other way round, which made tag fixing swap artist and album on an
    # ordinary Artist/Album tree whenever --layout was left out.)
    parent = audio_path.resolve().parent
    grandparent = parent.parent if parent != parent.parent else None

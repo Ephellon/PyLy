@@ -1,27 +1,31 @@
+"""
+PyLy 2 command-line interface.
+
+Built entirely from the FLAGS table in options.py. No legacy flag names remain.
+"""
+
+from __future__ import annotations
+
 import argparse
 import sys
-import time
 from pathlib import Path
+from typing import Any
 
-from .pipeline import run_pipeline
-from .console_ui import LiveStatus, banner, ok, err, warn, info, RollingETA, format_duration, set_color_enabled
-
-
-from .inputs import (
-   AUDIO_EXTS, is_audio_file as _is_audio_file,
-   collect_audio_files as _collect_inputs, collect_lrc_files as _collect_lrc_inputs,
+from .options import (
+   FLAGS, FLAG_BY_NAME, RunOptions, ACTION_ORDER, DEFAULT_ACTION,
+   DEFAULT_LYRIC_SOURCES,
 )
+from .settings import (
+   load_settings, build_options, get_key, SettingsError, set_current_settings,
+)
+from .console_ui import set_color_enabled, banner, ok, err, warn, info
+from .inputs import collect_audio_files
 
 
 def _configure_stdio() -> None:
    """
-   Force stdout/stderr to UTF-8 so PyLy's output (the ✓ glyphs, em dashes, and
-   Unicode characters in filenames) survives being redirected to a file or pipe.
-
-   When stdout is a real console this is already fine, but ``pyly ... > out.log``
-   makes Python encode with the locale codepage (cp1252 on Windows), which
-   raises UnicodeEncodeError on any non-cp1252 character. ``errors="replace"``
-   keeps us crash-proof even on genuinely unencodable bytes.
+   Force stdout/stderr to UTF-8 so PyLy's output survives being redirected
+   to a file or pipe.
    """
    for stream in (sys.stdout, sys.stderr):
       try:
@@ -30,797 +34,235 @@ def _configure_stdio() -> None:
          pass
 
 
+def _build_parser() -> argparse.ArgumentParser:
+   """Construct the ArgumentParser from FLAGS."""
+   ap = argparse.ArgumentParser(
+      prog="pyly",
+      add_help=True,
+      allow_abbrev=False,
+   )
+
+   # Positional paths
+   ap.add_argument(
+      "paths",
+      nargs="*",
+      type=Path,
+      help="Audio files, directories, or patterns to process",
+   )
+
+   # Group flags by group for help output
+   groups: dict[str, argparse._ArgumentGroup] = {}
+   for flag in FLAGS:
+      if flag.group and flag.group not in groups:
+         groups[flag.group] = ap.add_argument_group(flag.group.title())
+
+   for flag in FLAGS:
+      group = groups.get(flag.group, ap)
+      kwargs: dict[str, Any] = {
+         "help": flag.help,
+         "default": argparse.SUPPRESS,  # only typed flags appear in namespace
+      }
+
+      # Build option strings
+      opt_strings = [f"--{flag.name}"]
+      if flag.letter:
+         opt_strings.append(f"-{flag.letter}")
+      for alias in flag.aliases:
+         opt_strings.append(f"--{alias}")
+
+      if flag.value is None:  # switch
+         kwargs["action"] = "store_true"
+      elif flag.optional:
+         kwargs["nargs"] = "?"
+         kwargs["const"] = flag.const
+         if flag.metavar:
+            kwargs["metavar"] = flag.metavar
+         # Type conversion for optional-value flags
+         if flag.value == "int":
+            kwargs["type"] = int
+         elif flag.value == "float":
+            kwargs["type"] = float
+         elif isinstance(flag.value, tuple):
+            kwargs["choices"] = flag.value
+         else:
+            kwargs["type"] = str
+      else:  # required value
+         if flag.value == "int":
+            kwargs["type"] = int
+         elif flag.value == "float":
+            kwargs["type"] = float
+         elif isinstance(flag.value, tuple):
+            kwargs["choices"] = flag.value
+         else:
+            kwargs["type"] = str
+         if flag.metavar:
+            kwargs["metavar"] = flag.metavar
+
+      group.add_argument(*opt_strings, dest=flag.dest, **kwargs)
+
+   return ap
+
+
+def _cli_values_from_namespace(ns: argparse.Namespace) -> dict[str, object]:
+   """
+   Extract only the flags that were actually provided on the command line.
+   Because we used default=argparse.SUPPRESS, only typed flags are present.
+   """
+   return {k: v for k, v in vars(ns).items() if k != "paths"}
+
+
+def _path_swallow_guard(ns: argparse.Namespace, ap: argparse.ArgumentParser) -> None:
+   """
+   After parsing, check if any optional-value flag got a value that looks like a path.
+   If so, error with a helpful message.
+   """
+   for flag in FLAGS:
+      if not flag.optional:
+         continue
+      dest = flag.dest
+      if not hasattr(ns, dest):
+         continue
+      value = getattr(ns, dest)
+      if value is None or value is flag.const:
+         continue
+      # Value was provided; check if it looks like a path
+      v_str = str(value)
+      # Exception: --get-cover value with '=' is a key, allowed
+      if flag.name == "get-cover" and "=" in v_str:
+         continue
+      # Looks like a path if it exists, or contains path separators / drive letter
+      p = Path(v_str)
+      if p.exists() or "\\" in v_str or "/" in v_str or (len(v_str) >= 2 and v_str[1] == ":"):
+         ap.error(
+            f"'{v_str}' looks like a path, not a value for --{flag.name}; "
+            f"put the path first: pyly \"{v_str}\" --{flag.name}"
+         )
+
+
+def _wire_options(opts: RunOptions) -> None:
+   """Apply options that affect global state before running actions."""
+   # Color
+   color_val = opts.color
+   if color_val == "on":
+      set_color_enabled(True)
+   elif color_val == "off":
+      set_color_enabled(False)
+   else:  # auto
+      set_color_enabled(None)
+
+   # Whisper Python
+   if opts.whisper_python:
+      from .whisper_offline import set_whisper_python
+      set_whisper_python(opts.whisper_python)
+
+   # Musixmatch token
+   token = get_key("musixmatch")
+   if token:
+      from .lyrics_fetch import set_musixmatch_token
+      set_musixmatch_token(token)
+
+
+def _dispatch_actions(opts: RunOptions) -> int:
+   """
+   Run the requested actions in order. Returns the max exit code.
+   Each action module is imported lazily.
+   """
+   exit_codes: list[int] = []
+
+   actions = opts.actions()
+   tags_done = False
+   cover_done = False
+   lyrics_done = False
+
+   for action_name in actions:
+      if action_name in ("get-info", "fix-tags", "check-tags"):
+         if not tags_done:
+            from .run_tags import run_get_info, run_fix_tags, run_check_tags
+            tags_done = True
+         if action_name == "get-info":
+            exit_codes.append(run_get_info(opts))
+         elif action_name == "fix-tags":
+            exit_codes.append(run_fix_tags(opts))
+         elif action_name == "check-tags":
+            exit_codes.append(run_check_tags(opts))
+
+      elif action_name in ("get-cover", "use-cover"):
+         if not cover_done:
+            from .run_tags import run_cover
+            cover_done = True
+            exit_codes.append(run_cover(opts))
+
+      elif action_name in ("make-lyrics", "get-lyrics", "refresh-lyrics", "upgrade-lyrics"):
+         if not lyrics_done:
+            from .run_lyrics import run_lyrics
+            lyrics_done = True
+            exit_codes.append(run_lyrics(opts))
+
+   return max(exit_codes) if exit_codes else 0
+
+
 def main(argv: list[str] | None = None) -> int:
    _configure_stdio()
-   ap = argparse.ArgumentParser(prog="pyly", add_help=True)
-   ap.add_argument("path", nargs="?", default=None, help="Audio file, .lrc file (for --redownload), or folder")
-   ap.add_argument("--recursive", "-r", action="store_true", help="Recurse when path is a folder")
-   ap.add_argument("--overwrite", "-o", action="store_true", help=("Overwrite existing output: .lrc files; album.nfo fields with -n; with -g, "
-                         "fetch from the provider even if a local image exists AND replace embedded art"))
-   ap.add_argument("--clean", "-c", action="store_true", help="Delete intermediates after success")
-   ap.add_argument("--dry-run", "-q", action="store_true", help="Print actions without running")
-   ap.add_argument("--log", "-v", action="store_true", help="Write per-file .pyly.log")
-   ap.add_argument("--model", "-m", default="small", help="Whisper model (tiny/base/small/medium/large)")
-   ap.add_argument("--language", "-l", default=None, help="Language code (e.g., en). Optional.")
-   ap.add_argument("--device", "-d", default=None, help="Device (cpu/cuda). Optional pass-through.")
-   ap.add_argument("--online", action="store_true", help="Opt-in online mode (currently unimplemented)")
 
-   color_group = ap.add_mutually_exclusive_group()
-   color_group.add_argument("--color", dest="color", action="store_const", const=True,
-                            help="Force color output")
-   color_group.add_argument("--no-color", dest="color", action="store_const", const=False,
-                            help="Disable color output")
-   ap.set_defaults(color=None)
+   ap = _build_parser()
+   # Intermixed parsing lets paths sit on either side of flags:
+   # pyly "<album 1>" --replace "<album 2>"
+   ns = ap.parse_intermixed_args(argv)
 
-   # Base lyrics
-   ap.add_argument("--base", "-b", dest="base_lyrics", default=None, help="Text-only lyrics file (no timing)")
-   ap.add_argument("--base-lyrics", dest="base_lyrics", default=None, help="Alias of --base")
-   ap.add_argument("--lyrics", dest="base_lyrics", default=None, help="Alias of --base")
-   ap.add_argument("--truth", "--base-truth", "-u", dest="truth_mode", action="store_true",
-                   help="Treat base lyrics as ground truth for patching (guarded by similarity).")
-   ap.add_argument("--base-strict", "-s", action="store_true",
-                   help="Drop unmatched Whisper lines when base lyrics are provided")
-   ap.add_argument("--base-threshold", "-t", type=float, default=0.82,
-                   help="Similarity threshold (0..1) to replace with base. Default: 0.82")
-   ap.add_argument("--base-window", "-w", type=int, default=12,
-                   help="Lookahead window in base lines while matching. Default: 12")
-   ap.add_argument("--base-max-merge", "-x", type=int, default=5,
-                   help="Max Whisper lines to merge into one base match. Default: 5")
-
-   # Fetch
-   ap.add_argument("--fetch", "-f", nargs="?", const="", default=None,
-                   help=("Fetch base lyrics online (optional provider/template). A comma list "
-                         "(e.g. musicbrainz,musixmatch) is tried in order until one finds lyrics; "
-                         "with -k/-K, until one has synced lyrics."))
-   ap.add_argument("--keep-as-primary", "-k", action="store_true",
-                   help="Prefer fetched synced LRC when available (implies --fetch).")
-   ap.add_argument(
-      "--fetch-only", action="store_true", default=False,
-      help=(
-         "Never run Whisper: write fetched synced lyrics when a provider has them, otherwise "
-         "skip the file and leave any existing .lrc alone. Requires --keep-as-primary."
-      ),
-   )
-   ap.add_argument(
-      "--whisper-python", default=None, metavar="PYTHON",
-      help=(
-         "Python interpreter that runs Whisper (one with openai-whisper + torch installed). "
-         "Default: $PYLY_WHISPER_PYTHON, then the Python running PyLy."
-      ),
-   )
-   ap.add_argument("--keep-as-alternate", "-K", action="store_true",
-                   help="Keep fetched synced LRC as <basename>.fetched.lrc (implies --fetch).")
-   ap.add_argument(
-      "--layout", "-y", default=None,
-      help=(
-         "Optional layout hint: lidarr/plex/flat preset or a custom template string. "
-         "Templates use token braces (e.g. {Artist Name}) and are used only when tags are missing."
-      ),
-   )
-
-   # Diff / rescue
-   ap.add_argument("--base-diff-threshold", "-i", type=float, default=0.75,
-                   help="Enable rescue pass if global similarity >= this. Default: 0.75")
-   ap.add_argument("--base-rescue", "-e", dest="base_rescue", action="store_true",
-                   help="Enable diff-driven rescue pass (default when base is used).")
-   ap.add_argument("--no-base-rescue", "-E", dest="base_rescue", action="store_false",
-                   help="Disable diff-driven rescue pass.")
-   ap.set_defaults(base_rescue=True)
-
-   # LRC header tags
-   ap.add_argument("--lrc-header", "-a", dest="lrc_header", action="store_true",
-                   help="Write metadata + PyLy tags into the LRC header. Default: on.")
-   ap.add_argument("--no-lrc-header", "-A", dest="lrc_header", action="store_false",
-                   help="Do not write header tags.")
-   ap.set_defaults(lrc_header=True)
-
-   # Re-download
-   ap.add_argument(
-      "--redownload", "-R", action="store_true",
-      help=(
-         "Re-fetch lyrics for existing .lrc files using the [PyLy:<url>] tag embedded in them. "
-         "Accepts audio files, .lrc files, or directories. Requires --overwrite to actually write."
-      ),
-   )
-
-   # Provider scraping opt-in
-   ap.add_argument(
-      "--allow-provider-site-scraping", "--apsss", dest="allow_provider_site_scraping",
-      action="store_true", default=False,
-      help=(
-         "Allow lyric providers that work by scraping websites rather than using a documented API. "
-         "Disabled by default. Only enable if you accept the provider's terms of use."
-      ),
-   )
-   ap.add_argument(
-      "--musixmatch-token", default=None, metavar="TOKEN",
-      help=(
-         "Login for the musixmatch provider: the Value of the browser cookie named "
-         "musixmatchUserToken on musixmatch.com while logged in (JSON like "
-         "{\"tokens\":{...},\"version\":1}), or a file holding it. Easiest: save it to "
-         "~/.pyly/musixmatch-token and omit this flag. Default: $PYLY_MUSIXMATCH_TOKEN, then "
-         "that file. See README 'Musixmatch login token'."
-      ),
-   )
-
-   # Find-better: only reprocess Whisper-transcribed .lrc files
-   ap.add_argument(
-      "--find-better", "-F", action="store_true", default=False,
-      help=(
-         "Only process audio files whose existing .lrc was transcribed by Whisper "
-         "(i.e. has no external [PyLy:<url>] tag). Files with externally fetched lyrics are skipped."
-      ),
-   )
-
-   # Provider listing (early-exit, no path required)
-   ap.add_argument(
-      "--list-providers", "-p", action="store_true", default=False,
-      help="Print all available lyric providers and exit.",
-   )
-
-   # File metadata check / match (standalone modes; no Whisper)
-   ap.add_argument(
-      "--check-file-metadata", "-z", nargs="?", const="strict", default=None,
-      choices=["strict", "loose"], metavar="MODE",
-      help=(
-         "Check that each audio file's embedded tags (title, artist, album, year, track) "
-         "match what the file should contain — derived from album.nfo/artist.nfo, then the "
-         "folder layout, then the filename. Reports mismatches; writes nothing. "
-         "MODE: strict (default — must match the .nfo field) or loose (may match the .nfo "
-         "or the folder layout, and ignores trailing '(...)' qualifiers like '(Digital Media 01)')."
-      ),
-   )
-   ap.add_argument(
-      "--match-file-metadata", "-Z", nargs="?", const="backup", default=None,
-      metavar="MODE",
-      help=(
-         "Fix mismatched tags by writing the expected values (sourced from album.nfo, then "
-         "layout, then filename) into the audio file via ffmpeg. MODE is one of: "
-         "backup (default — copy original to <file>.bak first), direct (in place, no backup), "
-         "copy (leave original, write <stem>.tagged.<ext>). Comparison strictness is strict "
-         "by default; combine with '-z loose' to fix under loose matching."
-      ),
-   )
-
-   # Enrich album.nfo from MusicBrainz using its embedded MBID
-   ap.add_argument(
-      "--update-nfo", "-n", action="store_true", default=False,
-      help=(
-         "Fill in missing album.nfo data (album artist, year, barcode, and the full track "
-         "list with titles/durations/MBIDs) by looking up the embedded musicbrainzalbumid "
-         "(or musicbrainzreleasegroupid) on MusicBrainz. Non-destructive: existing fields are "
-         "kept unless --overwrite is given. Backs up album.nfo.bak first; honours --dry-run."
-      ),
-   )
-
-   # Embed album cover art (metadata stage, after -Z and before -z)
-   from .cover_art import parse_embed_art_arg, DEFAULT_ART_PROVIDER
-   ap.add_argument(
-      "--embed-art", "-g", nargs="?", const=DEFAULT_ART_PROVIDER, default=None,
-      type=parse_embed_art_arg, metavar="PROVIDER[=KEY]",
-      help=(
-         "Embed album cover art into mp3/flac/m4a files. Without --overwrite: use a local "
-         "album|poster|default|cover|folder image (jpg/jpeg/png/webp/bmp/gif) from the file's "
-         "folder if there is one (no network), else fetch from PROVIDER; files that already "
-         "have embedded art are skipped. With --overwrite: fetch from PROVIDER even when a "
-         "local image exists (falling back to it if PROVIDER finds nothing), AND replace "
-         "existing embedded art. PROVIDER: musicbrainz (default), theaudiodb, apple, discogs, "
-         "spotify, youtube. KEY follows the first '=' (theaudiodb=KEY; spotify=ID:SECRET); "
-         "default $PYLY_<PROVIDER>_KEY, then ~/.pyly/<provider>-key. Keeps <file>.bak unless "
-         "-Z direct is also given. Put the path before -g."
-      ),
-   )
-
-   ns = ap.parse_args(argv)
-   set_color_enabled(ns.color)
-   if ns.musixmatch_token:
-      from .lyrics_fetch import set_musixmatch_token
-      set_musixmatch_token(ns.musixmatch_token)
-
-   # --list-providers: print registry and exit (no path needed)
-   if ns.list_providers:
+   # --list-sources: print sources and exit (no path required)
+   if getattr(ns, "list_sources", False):
       from .lyrics_fetch import list_providers
-      providers = list_providers()
+      from .cover_art import describe_art_providers
+
       print()
       print("  Available lyric providers:")
       print()
-      for p in providers:
-         scraping_note = "  [requires --allow-provider-site-scraping]" if p.requires_scraping else ""
-         print(f"    {p.name:<18} {p.description}{scraping_note}")
+      for p in list_providers():
+         note = "  [needs --allow-scraping]" if p.requires_scraping else ""
+         print(f"    {p.name:<18} {p.description}{note}")
       print()
-      from .cover_art import describe_art_providers
-      print("  Cover-art providers (--embed-art / -g):")
+      print("  Cover-art providers (--get-cover):")
       print()
-      for name, description in describe_art_providers():
-         print(f"    {name:<18} {description}")
+      for name, desc in describe_art_providers():
+         print(f"    {name:<18} {desc}")
       print()
       return 0
 
-   if not ns.path:
-      ap.error("the following arguments are required: path")
+   # Check this before "path required": when a flag swallowed the path, the
+   # helpful message is "put the path first", not "no path given".
+   _path_swallow_guard(ns, ap)
 
-   if ns.online:
-      print("[X] --online is not implemented. Offline Whisper is the default.", file=sys.stderr)
-      return 2
+   # Paths required unless --list-sources
+   paths = getattr(ns, "paths", [])
+   if not paths:
+      ap.error("the following arguments are required: paths")
 
-   if ns.keep_as_primary and ns.keep_as_alternate:
-      print("[X] --keep-as-primary and --keep-as-alternate are mutually exclusive.", file=sys.stderr)
-      return 2
+   # Combine CLI values with settings
+   cli_values = _cli_values_from_namespace(ns)
+   profile = cli_values.get("profile")
 
-   if ns.fetch_only and not ns.keep_as_primary:
-      print("[X] --fetch-only needs --keep-as-primary (-k): it writes fetched synced lyrics "
-            "and never falls back to Whisper.", file=sys.stderr)
-      return 2
-
-   if ns.whisper_python:
-      from .whisper_offline import set_whisper_python
-      set_whisper_python(ns.whisper_python)
-
-   if (ns.keep_as_primary or ns.keep_as_alternate) and ns.fetch is None:
-      ns.fetch = ""
-
-   # ------------------------------------------------------------------
-   # Steps 1-2 — metadata grooming. When -n/-Z/-g/-z are present they run
-   # first, in order: enrich the .nfo from MusicBrainz, fix the audio tags from
-   # it, embed cover art (using the fixed tags), then check. The run then flows
-   # into the lyrics pipeline (steps 3-7) only
-   # when lyrics work was actually requested; a bare metadata command stops
-   # here instead of transcribing every file. The final exit code is the worst
-   # of every stage that ran.
-   # ------------------------------------------------------------------
-   match_mode = None
-   if ns.match_file_metadata is not None:
-      match_mode = ns.match_file_metadata.strip().lower()
-      if match_mode not in {"backup", "direct", "copy"}:
-         print(f"[X] --match-file-metadata MODE must be backup, direct, or copy (got {match_mode!r}).", file=sys.stderr)
-         return 2
-
-   exit_codes: list[int] = []
-
-   if ns.update_nfo:
-      exit_codes.append(_run_update_nfo(ns))
-
-   if match_mode is not None:
-      strictness = ns.check_file_metadata or "strict"
-      exit_codes.append(_run_file_metadata(ns, write_mode=match_mode, strictness=strictness))
-
-   if ns.embed_art is not None:
-      # -Z direct means "no backups"; anything else (including -Z copy, whose
-      # .tagged sidecar -g leaves alone) embeds in place with a .bak.
-      exit_codes.append(_run_embed_art(ns, write_mode="direct" if match_mode == "direct" else "backup"))
-
-   if match_mode is None and ns.check_file_metadata:
-      exit_codes.append(_run_file_metadata(ns, write_mode=None, strictness=ns.check_file_metadata))
-
-   lyrics_requested = bool(
-      ns.fetch is not None or ns.base_lyrics or ns.keep_as_primary
-      or ns.keep_as_alternate or ns.redownload
-   )
-   if exit_codes and not lyrics_requested:
-      return max(exit_codes)
-
-   # ------------------------------------------------------------------
-   # Step 3 (fast path) — --redownload: refresh from the embedded .lrc URL
-   # ------------------------------------------------------------------
-   if ns.redownload:
-      exit_codes.append(_run_redownload(ns))
-      return max(exit_codes)
-
-   # ------------------------------------------------------------------
-   # Normal pipeline mode
-   # ------------------------------------------------------------------
    try:
-      inputs = _collect_inputs([ns.path], ns.recursive)
-   except Exception as e:
+      settings = load_settings()
+      set_current_settings(settings)
+      opts = build_options(cli_values, paths, settings, profile)
+   except SettingsError as e:
       print(f"[X] {e}", file=sys.stderr)
       return 2
 
-   if not inputs:
-      print("[!] No supported audio files found.", file=sys.stderr)
-      return 1
-
-   if ns.find_better:
-      from .lyrics_fetch import read_pyly_url_from_lrc as _read_url
-      filtered = []
-      for audio in inputs:
-         lrc = audio.with_suffix(".lrc")
-         if lrc.exists() and _read_url(lrc) is not None:
-            continue  # externally fetched — skip
-         filtered.append(audio)
-      inputs = filtered
-      if not inputs:
-         print("[!] No Whisper-transcribed files found (all existing .lrc files have an external URL).", file=sys.stderr)
-         return 1
-
-   base_arg = Path(ns.base_lyrics) if ns.base_lyrics else None
-   if base_arg and base_arg.is_absolute():
-      has_wildcard = "*" in base_arg.name or "?" in base_arg.name
-      if not has_wildcard and not base_arg.is_file():
-         print(f"[X] Base lyrics file not found: {base_arg}", file=sys.stderr)
-         return 2
-
-   total = len(inputs)
-   banner(f"PyLy — {total} file(s) queued")
-
-   ok_count = 0
-   fail_count = 0
-   skipped_count = 0
-
-   eta = RollingETA(total=total, window=5)
-   live = LiveStatus(enabled=True)
-
-   from .lyrics_fetch import parse_fetch_arg
-   fetch_config = parse_fetch_arg(ns.fetch, allow_scraping=ns.allow_provider_site_scraping)
-
-   for idx, audio in enumerate(inputs, start=1):
-      completed = (ok_count + skipped_count + fail_count)
-      eta_str = eta.eta_string(completed)
-      live.update(f"[{idx}/{total}] {audio.name}  (ETA ~ {eta_str})")
-
-      t0 = time.time()
-      try:
-         result = run_pipeline(
-            audio_path=audio,
-            overwrite=ns.overwrite,
-            clean=ns.clean,
-            dry_run=ns.dry_run,
-            write_log=ns.log,
-            whisper_model=ns.model,
-            language=ns.language,
-            device=ns.device,
-
-            base_lyrics_path=base_arg,
-            base_strict=ns.base_strict,
-            base_threshold=ns.base_threshold,
-            base_window=ns.base_window,
-            base_max_merge=ns.base_max_merge,
-
-            base_diff_threshold=ns.base_diff_threshold,
-            base_rescue=ns.base_rescue,
-            truth_mode=ns.truth_mode,
-
-            lrc_header=ns.lrc_header,
-            fetch_config=fetch_config,
-            fetch_keep_mode="primary" if ns.keep_as_primary else ("alternate" if ns.keep_as_alternate else None),
-            layout=ns.layout,
-            fetch_only=ns.fetch_only,
-         )
-         dt = time.time() - t0
-
-         status = result.get("status", "ok")
-         if status == "skipped":
-            skipped_count += 1
-            eta.add(min(dt, 2.0))
-            live.commit(ok(f"Skipped ({Path(result.get('lrc', '')).name})  [{format_duration(dt)}]"))
-         elif status == "dry_run":
-            ok_count += 1
-            eta.add(min(dt, 2.0))
-            live.commit(ok(f"Dry run  [{format_duration(dt)}]"))
-         else:
-            ok_count += 1
-            eta.add(dt)
-            out_name = Path(result.get("lrc", "")).name
-            live.commit(ok(f"OK ({out_name})  [{format_duration(dt)}]"))
-
-      except Exception as e:
-         dt = time.time() - t0
-         fail_count += 1
-         eta.add(dt)
-         live.commit(err(f"{e}  [{format_duration(dt)}]"))
-
-      completed = (ok_count + skipped_count + fail_count)
-      overall_eta = eta.eta_string(completed)
-      live.update(f"Progress: {completed}/{total}  |  Overall ETA ~ {overall_eta}")
-
-   live.clear()
-   banner(f"{ok_count} - OK / {skipped_count} - SKIPPED / {fail_count} - FAIL")
-   exit_codes.append(0 if fail_count == 0 else 1)
-   return max(exit_codes)
-
-
-def _run_redownload(ns) -> int:
-   """
-   Handle --redownload mode.
-
-   Accepts:
-   - Audio files: looks for sibling .lrc, reads [PyLy:url], re-fetches
-   - .lrc files: reads [PyLy:url] directly, re-fetches
-   - Directories: collects .lrc files (and audio files with sibling .lrc)
-   """
-   from pathlib import Path as _Path
-   from .lyrics_fetch import read_pyly_url_from_lrc, fetch_by_url, build_lrc_metadata_headers
-   from .lrc_writer import write_lrc
-   from .console_ui import info as _info
-
-   p = _Path(ns.path).expanduser()
-
-   # Collect .lrc files
-   lrc_files: list[_Path] = []
-
-   if p.is_file():
-      if p.suffix.lower() == ".lrc":
-         lrc_files.append(p.resolve())
-      elif p.suffix.lower() in {".mp3", ".flac", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".alac", ".wma", ".aiff"}:
-         # audio file — find sibling .lrc
-         sibling = p.with_suffix(".lrc")
-         if sibling.exists():
-            lrc_files.append(sibling.resolve())
-         else:
-            print(f"[!] No .lrc found for {p.name}", file=sys.stderr)
-            return 1
-      else:
-         print(f"[X] Not a supported file type for --redownload: {p}", file=sys.stderr)
-         return 2
-   elif p.is_dir():
-      pattern = p.rglob("*.lrc") if ns.recursive else p.glob("*.lrc")
-      lrc_files = sorted(f.resolve() for f in pattern)
-   else:
-      print(f"[X] Path not found: {p}", file=sys.stderr)
-      return 2
-
-   if not lrc_files:
-      print("[!] No .lrc files found.", file=sys.stderr)
-      return 1
-
-   total = len(lrc_files)
-   banner(f"PyLy --redownload — {total} file(s)")
-
-   ok_count = 0
-   skip_count = 0
-   fail_count = 0
-   no_url_count = 0
-
-   live = LiveStatus(enabled=True)
-   eta = RollingETA(total=total, window=5)
-
-   for idx, lrc_path in enumerate(lrc_files, start=1):
-      completed = ok_count + skip_count + fail_count + no_url_count
-      live.update(f"[{idx}/{total}] {lrc_path.name}  (ETA ~ {eta.eta_string(completed)})")
-      t0 = time.time()
-
-      try:
-         embedded_url = read_pyly_url_from_lrc(lrc_path)
-         if not embedded_url:
-            no_url_count += 1
-            dt = time.time() - t0
-            eta.add(min(dt, 0.1))
-            live.commit(ok(f"No URL tag  ({lrc_path.name})  [{format_duration(dt)}]"))
-            continue
-
-         fetched = fetch_by_url(embedded_url)
-         if not fetched or not fetched.synced_lrc_text:
-            fail_count += 1
-            dt = time.time() - t0
-            eta.add(dt)
-            live.commit(err(f"Fetch failed ({lrc_path.name})  [{format_duration(dt)}]"))
-            continue
-
-         if not ns.overwrite:
-            skip_count += 1
-            dt = time.time() - t0
-            eta.add(min(dt, 0.5))
-            live.commit(ok(f"Skipped (use --overwrite to update) ({lrc_path.name})  [{format_duration(dt)}]"))
-            continue
-
-         # Find sibling audio file for duration measurement
-         audio_sibling: _Path | None = None
-         for ext in (".flac", ".mp3", ".m4a", ".wav", ".ogg", ".opus", ".aac", ".alac", ".wma", ".aiff"):
-            candidate = lrc_path.with_suffix(ext)
-            if candidate.exists():
-               audio_sibling = candidate
-               break
-
-         headers = build_lrc_metadata_headers(
-            fetched=fetched,
-            audio_path=audio_sibling,
-            include_standard_tags=ns.lrc_header,
-         ) if ns.lrc_header else []
-
-         synced_lines = fetched.synced_lrc_text.splitlines()
-         write_lrc(lrc_path, synced_lines, overwrite=True, headers=headers)
-
-         ok_count += 1
-         dt = time.time() - t0
-         eta.add(dt)
-         live.commit(ok(f"Updated ({lrc_path.name})  [{format_duration(dt)}]"))
-
-      except Exception as e:
-         fail_count += 1
-         dt = time.time() - t0
-         eta.add(dt)
-         live.commit(err(f"{e}  ({lrc_path.name})  [{format_duration(dt)}]"))
-
-   live.clear()
-   if no_url_count:
-      banner(f"{ok_count} - UPDATED / {skip_count} - SKIPPED / {no_url_count} - NO URL / {fail_count} - FAIL")
-   else:
-      banner(f"{ok_count} - UPDATED / {skip_count} - SKIPPED / {fail_count} - FAIL")
-   return 0 if fail_count == 0 else 1
-
-
-def _run_file_metadata(ns, write_mode: str | None, strictness: str = "strict") -> int:
-   """
-   Handle --check-file-metadata (write_mode=None) and
-   --match-file-metadata (write_mode in {backup, direct, copy}).
-
-   Reads each audio file's embedded tags, derives the expected values from
-   album.nfo/artist.nfo -> folder layout -> filename, and either reports
-   mismatches (check) or writes corrections via ffmpeg (match). ``strictness``
-   is strict or loose (see compare_metadata).
-   """
-   from .file_metadata import (
-      read_embedded_tags,
-      actual_metadata,
-      expected_metadata,
-      layout_metadata,
-      compare_metadata,
-      find_album_nfo,
-      find_artist_nfo,
-      has_problems,
-      write_tags,
-   )
-
-   try:
-      inputs = _collect_inputs([ns.path], ns.recursive)
-   except Exception as e:
-      print(f"[X] {e}", file=sys.stderr)
-      return 2
-
-   if not inputs:
-      print("[!] No supported audio files found.", file=sys.stderr)
-      return 1
-
-   action = f"--match-file-metadata ({write_mode})" if write_mode else "--check-file-metadata"
-   banner(f"PyLy {action} [{strictness}] — {len(inputs)} file(s)")
-
-   clean_count = 0      # files whose tags already match
-   problem_count = 0    # files with at least one mismatch/missing
-   fixed_count = 0      # files actually written (match mode)
-   fail_count = 0
-
-   for audio in inputs:
-      try:
-         album_nfo = find_album_nfo(audio)
-         artist_nfo = find_artist_nfo(audio)
-         tags = read_embedded_tags(audio)
-         expected = expected_metadata(audio, ns.layout, album_nfo, artist_nfo)
-         actual = actual_metadata(tags)
-         layout_exp = layout_metadata(audio, ns.layout)
-         diffs = compare_metadata(expected, actual, layout_exp, mode=strictness)
-
-         if not has_problems(diffs):
-            clean_count += 1
-            print(ok(f"{audio.name}  (tags match)"))
-            continue
-
-         problem_count += 1
-         sources = []
-         if album_nfo:
-            sources.append("album.nfo")
-         if artist_nfo:
-            sources.append("artist.nfo")
-         nfo_note = f"  [{', '.join(sources)}]" if sources else "  [no .nfo]"
-         print(warn(f"{audio.name}{nfo_note}"))
-         for d in diffs:
-            if d.status == "mismatch":
-               print(info(f"  {d.field}: tag={d.actual!r}  ->  expected {d.expected!r}"))
-            elif d.status == "missing":
-               print(info(f"  {d.field}: tag missing  ->  expected {d.expected!r}"))
-
-         if write_mode:
-            changed, message = write_tags(
-               audio, expected, diffs,
-               mode=write_mode, dry_run=ns.dry_run,
-            )
-            if changed:
-               fixed_count += 1
-               print(ok(f"  {message}"))
-            else:
-               print(info(f"  (skipped write: {message})"))
-
-      except Exception as e:
-         fail_count += 1
-         print(err(f"{audio.name}: {e}"))
-
-   if write_mode:
-      verb = "WOULD FIX" if ns.dry_run else "FIXED"
-      banner(
-         f"{clean_count} - OK / {problem_count} - MISMATCH / "
-         f"{fixed_count} - {verb} / {fail_count} - FAIL"
-      )
-   else:
-      banner(f"{clean_count} - OK / {problem_count} - MISMATCH / {fail_count} - FAIL")
-
-   # Non-zero exit when problems remain or anything failed, so this is usable
-   # as a check in scripts. In match mode, fixed files no longer count as bad.
-   unresolved = (problem_count - fixed_count) if write_mode else problem_count
-   return 0 if (unresolved == 0 and fail_count == 0) else 1
-
-
-def _run_embed_art(ns, write_mode: str) -> int:
-   """
-   Handle --embed-art: embed one cover per album folder into its audio files.
-
-   The image is resolved once per folder (local file, or a provider lookup)
-   and reused for every track in it. Without --overwrite, files that already
-   carry art are skipped first, so they cost no lookup at all.
-   """
-   from .cover_art import (
-      ArtResolver,
-      can_embed,
-      cannot_hold_art,
-      embed_cover,
-      has_embedded_art,
-      resolve_art_key,
-   )
-
-   try:
-      inputs = _collect_inputs([ns.path], ns.recursive)
-   except Exception as e:
-      print(f"[X] {e}", file=sys.stderr)
-      return 2
-
-   if not inputs:
-      print("[!] No supported audio files found.", file=sys.stderr)
-      return 1
-
-   spec = ns.embed_art
-   replacing = " — replacing existing art" if ns.overwrite else ""
-   banner(f"PyLy --embed-art ({spec.provider}){replacing} — {len(inputs)} file(s)")
-
-   resolver = ArtResolver(
-      spec.provider, resolve_art_key(spec.provider, spec.key),
-      overwrite=ns.overwrite, layout=ns.layout,
-   )
-   embedded = has_art = no_art = unsupported = fail = 0
-   warned_ogg = False
-
-   try:
-      for audio in inputs:
-         try:
-            if not can_embed(audio):
-               unsupported += 1
-               if cannot_hold_art(audio):
-                  if not warned_ogg:
-                     warned_ogg = True
-                     print(warn("ffmpeg can't write cover art into .ogg/.opus files; skipping them"))
-               else:
-                  print(warn(f"{audio.name}  (cover art not supported for {audio.suffix} — skipped)"))
-               continue
-
-            if not ns.overwrite and has_embedded_art(audio):
-               has_art += 1
-               print(ok(f"{audio.name}  (has art — skipped)"))
-               continue
-
-            art = resolver.resolve(audio)
-            if art is None:
-               no_art += 1
-               print(warn(f"{audio.name}  no art found"))
-               continue
-
-            changed, message = embed_cover(audio, art.image, mode=write_mode, dry_run=ns.dry_run)
-            if changed:
-               embedded += 1
-               verb = "would embed" if ns.dry_run else "embedded"
-               print(ok(f"{audio.name}  {verb} (source: {art.label})"))
-            else:
-               fail += 1
-               print(err(f"{audio.name}: {message}"))
-
-         except Exception as e:
-            fail += 1
-            print(err(f"{audio.name}: {e}"))
-   finally:
-      resolver.close()
-
-   verb = "WOULD EMBED" if ns.dry_run else "EMBEDDED"
-   banner(
-      f"{embedded} - {verb} / {has_art} - HAS ART / {no_art} - NO ART / "
-      f"{unsupported} - UNSUPPORTED / {fail} - FAIL"
-   )
-   return 0 if fail == 0 else 1
-
-
-def _run_update_nfo(ns) -> int:
-   """
-   Handle --update-nfo: enrich each album.nfo from its embedded MusicBrainz id.
-
-   Collects album.nfo files under the path, looks up the release on MusicBrainz
-   (release id first, then release-group id), and writes back any missing
-   fields plus the track list. --overwrite replaces conflicting fields;
-   --dry-run previews; a .bak copy is kept before any write.
-   """
-   import shutil
-   from pathlib import Path as _Path
-
-   from .file_metadata import read_nfo_mbids, album_nfo_missing_fields, enrich_album_nfo, _read_text
-   from .lyrics_fetch import fetch_mb_release, resolve_release_from_group
-
-   root = _Path(ns.path).expanduser()
-   if not root.exists():
-      print(f"[X] Path not found: {root}", file=sys.stderr)
-      return 2
-
-   if root.is_file() and root.name.lower() == "album.nfo":
-      nfo_files = [root.resolve()]
-   elif root.is_dir():
-      pattern = root.rglob("album.nfo") if ns.recursive else root.glob("album.nfo")
-      nfo_files = sorted(f.resolve() for f in pattern)
-   else:
-      print(f"[X] --update-nfo expects an album.nfo file or a folder (got {root.name}).", file=sys.stderr)
-      return 2
-
-   if not nfo_files:
-      # Nothing to enrich is not a failure: -n never creates an album.nfo, and a
-      # caller looping over albums shouldn't see an error for one that has none.
-      print("(i) No album.nfo files found; nothing to update.")
-      return 0
-
-   banner(f"PyLy --update-nfo — {len(nfo_files)} album.nfo file(s)")
-
-   updated = skipped = no_id = fail = 0
-
-   for nfo_path in nfo_files:
-      label = nfo_path.parent.name or nfo_path.name
-      try:
-         release_id, group_id = read_nfo_mbids(nfo_path)
-         if not (release_id or group_id):
-            no_id += 1
-            print(warn(f"{label}  (no musicbrainz id in album.nfo)"))
-            continue
-
-         # Check locally before touching the network: only hit MusicBrainz when
-         # a substantive field is missing (or --overwrite forces a refresh).
-         missing = album_nfo_missing_fields(nfo_path)
-         if not ns.overwrite and not missing:
-            skipped += 1
-            print(ok(f"{label}  (already complete — skipped MusicBrainz lookup)"))
-            continue
-
-         if missing:
-            print(info(f"{label}  (missing: {', '.join(missing)}) — looking up MusicBrainz"))
-
-         if not release_id:
-            release_id = resolve_release_from_group(group_id) or ""
-         if not release_id:
-            fail += 1
-            print(err(f"{label}  (could not resolve a release from the release-group id)"))
-            continue
-
-         release = fetch_mb_release(release_id)
-         if not release:
-            fail += 1
-            print(err(f"{label}  (MusicBrainz lookup failed)"))
-            continue
-
-         changes, new_text = enrich_album_nfo(nfo_path, release, overwrite=ns.overwrite)
-         if not changes:
-            skipped += 1
-            print(ok(f"{label}  (already complete)"))
-            continue
-
-         summary = ", ".join(changes)
-         if ns.dry_run:
-            print(ok(f"{label}  would update: {summary}"))
-            updated += 1
-            continue
-
-         if new_text != (_read_text(nfo_path) or ""):
-            bak = nfo_path.with_name(nfo_path.name + ".bak")
-            if not bak.exists():
-               shutil.copy2(nfo_path, bak)
-            nfo_path.write_text(new_text, encoding="utf-8", newline="\n")
-         updated += 1
-         print(ok(f"{label}  updated: {summary}"))
-
-      except Exception as e:
-         fail += 1
-         print(err(f"{label}: {e}"))
-
-   verb = "WOULD UPDATE" if ns.dry_run else "UPDATED"
-   banner(f"{updated} - {verb} / {skipped} - COMPLETE / {no_id} - NO ID / {fail} - FAIL")
-   return 0 if fail == 0 else 1
+   # No action asked for means make-lyrics; record it so every module sees
+   # the same choice the dispatcher makes.
+   if opts.actions() == [DEFAULT_ACTION] and not opts.make_lyrics:
+      opts.make_lyrics = True
+
+   # Validate mutually exclusive refresh/upgrade (also checked in build_options)
+   if opts.refresh_lyrics and opts.upgrade_lyrics:
+      ap.error("Cannot combine --refresh-lyrics and --upgrade-lyrics; pick one")
+
+   # Wire global state
+   _wire_options(opts)
+
+   # Dispatch actions
+   return _dispatch_actions(opts)
 
 
 if __name__ == "__main__":

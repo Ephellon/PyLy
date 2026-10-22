@@ -1,10 +1,10 @@
-# PyLy — Lyrics for Plex, the offline way
+# PyLy 2 — Lyrics for your music, the offline way
 
-PyLy listens to your music and writes the lyrics file for it — no account needed, no internet required by default.
+PyLy listens to your music and writes synced lyrics files for it — no account needed, no internet required by default.
 
 It runs your audio through [Whisper](https://github.com/openai/whisper) (an offline speech-to-text model), cleans up the result, and saves a `.lrc` file next to your audio. Plex picks that file up automatically and shows lyrics in sync as the song plays.
 
-> **Your audio files are never touched.** PyLy only ever reads them — with two opt-in exceptions: `--match-file-metadata` (`-Z`) deliberately rewrites tags to fix them, and `--embed-art` (`-g`) embeds cover art. Both make a backup first by default. See [Checking and fixing file tags](#checking-and-fixing-file-tags) and [Embedding cover art](#embedding-cover-art).
+> **Your audio files are never touched.** PyLy only ever reads them — with two opt-in exceptions: `--fix-tags` (`-f`) deliberately rewrites tags to fix them, and `--use-cover` (`-s`) or `--get-cover` (`-v`) embeds cover art. Both make a backup first by default. See [Checking and fixing tags](#checking-and-fixing-tags) and [Cover art](#cover-art).
 
 ---
 
@@ -14,21 +14,17 @@ It runs your audio through [Whisper](https://github.com/openai/whisper) (an offl
 * [Install](#install)
 * [Quick start](#quick-start)
 * [What PyLy creates](#what-pyly-creates)
-* [Getting better results](#getting-better-results)
-  * [Fetching lyrics from the internet](#fetching-lyrics-from-the-internet)
-  * [Providing your own lyrics file](#providing-your-own-lyrics-file)
-  * [Choosing a Whisper model](#choosing-a-whisper-model)
-* [Lyric providers](#lyric-providers)
-* [Re-downloading lyrics](#re-downloading-lyrics)
-* [Checking and fixing file tags](#checking-and-fixing-file-tags)
-* [Filling in album.nfo details from MusicBrainz](#filling-in-albumnfo-details-from-musicbrainz)
-* [Embedding cover art](#embedding-cover-art)
-* [Advanced: fine-tuning the lyrics alignment](#advanced-fine-tuning-the-lyrics-alignment)
-* [Advanced: fetch templates and folder layout hints](#advanced-fetch-templates-and-folder-layout-hints)
-* [Advanced: what goes inside a .lrc file](#advanced-what-goes-inside-a-lrc-file)
-* [ffmpeg](#ffmpeg)
+* [Getting lyrics](#getting-lyrics)
+* [Your own lyrics file](#your-own-lyrics-file)
+* [Checking and fixing tags](#checking-and-fixing-tags)
+* [Filling in album.nfo](#filling-in-album-nfo)
+* [Cover art](#cover-art)
+* [Refreshing and upgrading lyrics](#refreshing-and-upgrading-lyrics)
+* [Settings file and profiles](#settings-file-and-profiles)
 * [How a run is ordered](#how-a-run-is-ordered)
 * [All flags](#all-flags)
+* [Moving from PyLy 1](#moving-from-pyly-1)
+* [ffmpeg](#ffmpeg)
 
 ---
 
@@ -39,7 +35,7 @@ You'll need a few things installed:
 - **Python 3.10 or newer** — [python.org](https://www.python.org/downloads/)
 - **Whisper** — the speech-to-text model that does the heavy lifting
   ```
-  pip install whisper
+  pip install openai-whisper torch
   ```
 - **ffmpeg** — used internally to read audio. If you don't have it, see [ffmpeg](#ffmpeg) below.
 
@@ -66,7 +62,7 @@ pip install -e .
 Or on Windows, just use `pyly.bat` — it will install PyLy automatically the first time and run your command:
 
 ```
-pyly.bat "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac"
+pyly.bat "R:\Local\Queen\A Night at the Opera\11 Bohemian Rhapsody.mp3"
 ```
 
 Or on Linux systems, just use `pyly.sh` — it will install PyLy automatically the first time and run your command:
@@ -75,7 +71,7 @@ Or on Linux systems, just use `pyly.sh` — it will install PyLy automatically t
 # Make the file executable (once)
 sudo chmod +x pyly.sh
 # Run the program as intended
-pyly.sh "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac"
+pyly.sh "R:\Local\Queen\A Night at the Opera\11 Bohemian Rhapsody.mp3"
 ```
 
 ---
@@ -85,7 +81,7 @@ pyly.sh "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac"
 **One song:**
 
 ```
-pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac"
+pyly "R:\Local\Queen\A Night at the Opera\11 Bohemian Rhapsody.mp3"
 ```
 
 PyLy will listen to the file, figure out the words, and save `11 Bohemian Rhapsody.lrc` in the same folder. That's it.
@@ -93,251 +89,132 @@ PyLy will listen to the file, figure out the words, and save `11 Bohemian Rhapso
 **A whole album:**
 
 ```
-pyly "X:\Music\Queen\A Night at the Opera"
+pyly "R:\Local\Queen\A Night at the Opera"
 ```
 
 **Your entire music library:**
 
 ```
-pyly "X:\Music" --recursive
+pyly "R:\Local" --include-subfolders
 ```
 
 **Already have `.lrc` files and want to regenerate them?**
 
-By default PyLy won't touch existing files. Add `--overwrite` to replace them:
+By default PyLy won't touch existing files. Add `--replace` to replace them:
 
 ```
-pyly "X:\Music" --recursive --overwrite
+pyly "R:\Local" --include-subfolders --replace
 ```
 
-**Want to keep things tidy?** Add `--clean` to delete the intermediate files PyLy creates along the way (they're only useful for debugging):
+**Want to keep things tidy?** Add `--clean-up` to delete the temporary files PyLy creates along the way (they're only useful for debugging):
 
 ```
-pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --clean
+pyly "R:\Local\Queen\A Night at the Opera\11 Bohemian Rhapsody.mp3" --clean-up
 ```
 
 ---
 
 ## What PyLy creates
 
-When you run PyLy on `11 Bohemian Rhapsody.flac`, you'll find these new files in the same folder:
+When you run PyLy on `11 Bohemian Rhapsody.mp3`, you'll find these new files in the same folder:
 
 | File | What it is |
 |---|---|
 | `11 Bohemian Rhapsody.srt` | Raw transcript from Whisper |
 | `11 Bohemian Rhapsody.red.srt` | Same transcript, with noise and junk lines removed |
 | `11 Bohemian Rhapsody.lrc` | The final lyrics file — this is what Plex reads |
-| `11 Bohemian Rhapsody.pyly.log` | A log of what happened, only created if you pass `--log` |
+| `11 Bohemian Rhapsody.pyly.log` | A log of what happened, only created if you pass `--write-log` |
 
-The `.srt` files are just intermediate steps. The only file you actually need is the `.lrc`. You can delete the others, or have PyLy do it for you with `--clean`.
+The `.srt` files are just intermediate steps. The only file you actually need is the `.lrc`. You can delete the others, or have PyLy do it for you with `--clean-up`.
 
 **Supported audio formats:** `.mp3` `.flac` `.wav` `.m4a` `.aac` `.ogg` `.opus` `.alac` `.wma` `.aiff`
 
 ---
 
-## Getting better results
+## Getting lyrics
 
-Whisper is impressive, but it isn't perfect — especially on songs with heavy production, fast delivery, or unusual pronunciation. Here are the main ways to improve what you get out of PyLy.
+PyLy can get lyrics in two main ways: downloading from online sources or using Whisper to transcribe the audio. By default, PyLy tries to download synced lyrics first and only uses Whisper for tracks without online matches.
 
-### Fetching lyrics from the internet
+### Action flags for lyrics
 
-The quickest way to get accurate lyrics is to let PyLy look them up online and use them as a reference. It still uses Whisper for the timing, but it replaces Whisper's guessed words with the correct ones wherever they match closely enough.
+- `--make-lyrics` (`-m`): **Default action**. Download synced lyrics first; run Whisper only for tracks still without them. Plain lyrics found online, or from `--use-lyrics`, become the reference Whisper is matched against.
+- `--get-lyrics` (`-g`): Download lyrics only, never run Whisper. Tracks with no synced lyrics are skipped. Use `--make-lyrics` alongside to pick which sources are searched.
+- `--refresh-lyrics` (`-y`): Download again from the address saved in each `.lrc` (`[PyLy:<url>]` header line) and save. Use `--preview` to only report what would change.
+- `--upgrade-lyrics`: Only tracks whose `.lrc` was made by Whisper (no `[PyLy:<url>]` line); replace it when a source has synced lyrics; never run Whisper.
+
+### Sources and how to choose them
+
+Online sources are tried in order until one finds lyrics. The default source is `musicbrainz`.
+
+- `lrclib`: A free, open database of synced lyrics. Fast and simple.
+- `musicbrainz`: Uses MusicBrainz to look up the canonical recording first, then fetches from lrclib using that cleaner metadata. Slower (about 2–3 seconds per track on the first pass), but more accurate for messy or unusual filenames.
+- `lyricradar`: Aggregates several sources and returns synced (timestamped) lyrics as well as plain text. Requires `--allow-scraping`.
+- `genius`: Genius.com, scraped from the song page. Plain (un-synced) lyrics, usually complete and uncensored. Requires `--allow-scraping`.
+- `musixmatch`: Musixmatch, via the backend its own apps use. Large catalog of synced lyrics; falls back to plain text when a song has none. Requires `--allow-scraping` **and** a Musixmatch login key (see [Musixmatch key](#musixmatch-key)).
+
+**Custom search templates:** Add `:query` after the sources to set a custom search (e.g. `musicbrainz:{Artist Name} {Track Title}`). Tokens are filled from tags first, then inferred from path.
+
+**Example — download lyrics from MusicBrainz and Musixmatch (trying MusicBrainz first):**
 
 ```
-pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch
+pyly "R:\Local\Queen\A Night at the Opera" --get-lyrics musicbrainz,musixmatch --allow-scraping
 ```
 
-If you'd rather skip Whisper entirely and just use the online lyrics as-is (synced timestamps and all, if available), use `--keep-as-primary`:
+**Example — use a custom search for Musixmatch:**
 
 ```
-pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --keep-as-primary
+pyly "R:\Local\Queen\A Night at the Opera\11 Bohemian Rhapsody.mp3" --get-lyrics musixmatch:{Artist Name} {Track Title} --allow-scraping
 ```
 
-Or if you want both — the online synced lyrics saved as a separate file, and PyLy's Whisper version as the main one:
+---
 
-```
-pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --keep-as-alternate
-```
-
-This saves the fetched version as `11 Bohemian Rhapsody.fetched.lrc` and the Whisper version as the normal `11 Bohemian Rhapsody.lrc`.
-
-Results are saved locally so PyLy won't re-fetch the same song twice.
-
-### Providing your own lyrics file
+## Your own lyrics file
 
 If you already have the correct lyrics for a song as a plain text file (just the words, no timestamps), you can hand them to PyLy directly:
 
 ```
-pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --base "lyrics.txt"
+pyly "R:\Local\Queen\A Night at the Opera\11 Bohemian Rhapsody.mp3" --use-lyrics lyrics.txt
 ```
 
-PyLy will use Whisper's timing but replace the guessed words with yours wherever they match. If Whisper is mostly right but has a few wrong words here and there, this cleans those up nicely.
+PyLy will use Whisper's timing but replace the guessed words with yours wherever they match.
 
 If you have a lyrics file for every track and they're named the same as the audio file, you can use a wildcard:
 
 ```
-pyly "X:\Music\Queen\A Night at the Opera" --base "*.txt"
+pyly "R:\Local\Queen\A Night at the Opera" --use-lyrics *.txt
 ```
 
-For each `.flac` (or `.mp3`, etc.) it finds, PyLy will look for a matching `.txt` with the same name in the same folder.
+For each `.mp3` (or `.flac`, etc.) it finds, PyLy will look for a matching `.txt` with the same name in the same folder.
 
-**If you really trust your lyrics file** and want PyLy to fix even the sections where Whisper has gone completely off the rails, add `--truth`:
+**Modifiers for matching:**
 
-```
-pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --base "lyrics.txt" --truth
-```
+- `--trust-lyrics` (`-t`): Treat the reference lyrics as correct when patching Whisper's text. More aggressive — replaces garbled Whisper sections with your lyrics.
+- `--drop-extras` (`-x`): Drop Whisper lines that match nothing in the reference lyrics.
 
-This is more aggressive — it replaces garbled Whisper sections with your lyrics rather than just cleaning up close matches. It only kicks in when PyLy is confident the overall transcript is aligned to the right song, so it won't silently corrupt things if the wrong lyrics file is used.
+Both turn on `--make-lyrics`.
 
-### Choosing a Whisper model
-
-Whisper comes in several sizes. Bigger models are slower but more accurate:
-
-| Model | Speed | Accuracy |
-|---|---|---|
-| `tiny` | Very fast | Lower |
-| `base` | Fast | Decent |
-| `small` | Moderate *(default)* | Good |
-| `medium` | Slow | Better |
-| `large` | Slowest | Best |
+**Example — use your lyrics file and trust it completely:**
 
 ```
-pyly "X:\Music" --recursive --model large
-```
-
-If you have a GPU, `medium` or `large` are worth trying. On CPU, `small` is usually the best balance.
-
----
-
-## Lyric providers
-
-When you use `--fetch`, PyLy pulls lyrics from an online source. You can pick which one:
-
-```
-pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch lrclib
-pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch musicbrainz
-```
-
-| Provider | What it does |
-|---|---|
-| `lrclib` *(default)* | A free, open database of synced lyrics. Fast and simple. |
-| `musicbrainz` | Uses MusicBrainz to look up the canonical recording first, then fetches from lrclib using that cleaner metadata. Slower (about 2–3 seconds per track on the first pass), but more accurate for messy or unusual filenames. |
-| `lyricradar` | lyricradar.com's backend, which aggregates several sources and returns **synced** (timestamped) lyrics as well as plain text. Requires `--allow-provider-site-scraping`. Some sources are censored. |
-| `genius` | Genius.com, scraped from the song page. Plain (un-synced) lyrics, usually complete and uncensored. Requires `--allow-provider-site-scraping`. |
-| `musixmatch` | Musixmatch, via the backend its own apps use. Large catalog of **synced** lyrics; falls back to plain text when a song has none. Requires `--allow-provider-site-scraping` **and** a musixmatch.com login token (see below). |
-
-**When to use `musicbrainz`:** If lrclib keeps returning wrong results — for example, a live version instead of the studio track, or a cover instead of the original — MusicBrainz's extra lookup step often gets it right. It also records a MusicBrainz ID inside the `.lrc` file, which is useful if you use other MusicBrainz-aware tools.
-
-Note that `musicbrainz` doesn't host lyrics itself. It just helps find the right entry in lrclib.
-
-**Falling back to another provider.** List several providers, separated by commas, and PyLy tries them in order until one finds lyrics:
-
-```
-pyly "X:\Music\Queen\A Night at the Opera\03 I'm in Love with My Car.flac" --fetch musicbrainz,musixmatch --allow-provider-site-scraping
-```
-
-If `musicbrainz` finds nothing for `I'm in Love with My Car`, PyLy asks `musixmatch` next. With `--keep-as-primary` or `--keep-as-alternate` (which keep the fetched *synced* lyrics), PyLy also moves on when a provider only has plain text. Say `genius` returns plain lyrics for `Bohemian Rhapsody`: PyLy then asks `musixmatch` for synced ones, and falls back to the plain text only if nobody has synced lyrics. A custom search query applies to every provider in the list (`--fetch "musicbrainz,musixmatch:{Artist Name} {Track Title}"`), and each scraping provider in it still needs `--allow-provider-site-scraping`; without it, PyLy skips that provider and carries on with the rest.
-
-**Scraping providers.** `lyricradar`, `genius` and `musixmatch` work by talking to a website's browser backend rather than a documented API, so they're off by default. Turn them on with `--allow-provider-site-scraping` only if you accept each site's terms of use:
-
-```
-pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch genius --allow-provider-site-scraping
-pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch lyricradar --keep-as-primary --allow-provider-site-scraping
-```
-
-Since `lyricradar` and `musixmatch` can return a synced `.lrc`, they pair well with `--keep-as-primary`/`--keep-as-alternate`; `genius` is plain text, so it's best as a reference for aligning Whisper (`--fetch genius`).
-
-**Musixmatch login token.** Musixmatch hands anonymous visitors deliberately wrong results (unrelated songs), so `musixmatch` needs a token from a logged-in session. To get one:
-
-1. Log in at [musixmatch.com](https://www.musixmatch.com) in your browser (a free account works).
-2. Press **F12** to open the developer tools, then go to **Application** (Chrome/Edge) or **Storage** (Firefox) → **Cookies** → `https://www.musixmatch.com`.
-3. Find the row whose **Name** is `musixmatchUserToken` and copy its **Value**: the whole thing, braces included. It's one long line of JSON listing about two dozen tokens, and looks like this (shortened, values made up):
-
-   ```
-   {"tokens":{"mxm-account-v1.0":"2610ab12…","mxm-com-v1.0":"2610cd34…","community-app-v1.0":"2610ef56…", … },"version":1}
-   ```
-
-4. Paste that into a plain-text file at `~/.pyly/musixmatch-token` (on Windows, `C:\Users\<you>\.pyly\musixmatch-token`, no file extension). PyLy reads it from there automatically, with no flag needed.
-
-That's all most people need. In detail:
-
-- **What PyLy uses:** the `mxm-com-v1.0` token from that JSON (falling back to `community-app-v1.0`, `mxm-pro-web-v1.0`, then `mxm-account-v1.0` if it's missing). The other tokens are ignored.
-- **Other forms it accepts**, all treated the same, so paste whichever you have:
-
-  | You copied… | Looks like |
-  |---|---|
-  | the cookie's value (recommended) | `{"tokens":{…},"version":1}` |
-  | the cookie with its name | `musixmatchUserToken={"tokens":{…},"version":1}` |
-  | the browser's whole `Cookie` header (Network tab → any request → Request Headers → `cookie`) | `show-pro-banner=false; musixmatchUserToken={…}; …` |
-  | just one token: the text inside the quotes after `"mxm-com-v1.0":` | `2610cd34…` (52 letters and digits starting with `2610`) |
-
-- **Where else it can go** (first one found wins):
-
-  | Where | Example |
-  |---|---|
-  | `--musixmatch-token` | `--musixmatch-token "C:\Users\me\musixmatch-cookie.txt"` (a file holding any form above), or the value itself in single quotes: `--musixmatch-token '{"tokens":{…},"version":1}'` |
-  | `PYLY_MUSIXMATCH_TOKEN` environment variable | any form above, or a path to a file holding it |
-  | `~/.pyly/musixmatch-token` | a file holding any form above; picked up automatically |
-
-  The JSON is full of `"` and `{}` characters that shells mangle, so a file is the easiest route.
-
-Treat this value like a password: anyone holding it is logged in as you, so keep it out of shared folders and repositories. PyLy never writes it into `.lrc` files, logs or the cache. If Musixmatch says the token is missing, check that the file isn't saved as `musixmatch-token.txt`, which Windows does by default when "hide extensions" is on.
-
-```
-pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch musixmatch --keep-as-primary --allow-provider-site-scraping
-```
-
-If Musixmatch rejects the token (it expired, or the site wants a captcha), PyLy warns once and stops asking Musixmatch for the rest of the run. Log in again and copy a fresh cookie.
-
-To see all available providers:
-
-```
-pyly --list-providers
-pyly -p
+pyly "R:\Local\Queen\A Night at the Opera\11 Bohemian Rhapsody.mp3" --use-lyrics lyrics.txt --trust-lyrics --drop-extras
 ```
 
 ---
 
-## Re-downloading lyrics
+## Checking and fixing tags
 
-When PyLy fetches lyrics online, it saves the source URL inside the `.lrc` file. Later, if the lyrics database has been updated or corrected, you can refresh your files without re-running Whisper:
+Sometimes a track's embedded tags are simply wrong — a ripper or a careless edit leaves `03 I'm in Love With My Car.mp3` carrying the title *"You're My Best Friend"* (another track from the same album). Lyrics only line up when the tags are right, so PyLy can audit them and, if you ask, fix them.
 
-```
-# See what would be updated (nothing is written yet)
-pyly "X:\Music" --recursive --redownload
-
-# Actually update the files
-pyly "X:\Music" --recursive --redownload --overwrite
-```
-
-You can point this at a single `.lrc` file, a single audio file (PyLy will find the matching `.lrc`), or a whole folder. Without `--overwrite`, it's a dry run — PyLy checks whether new lyrics are available but doesn't save anything, which is useful for testing before committing to a bulk update.
-
-### Upgrading Whisper-made lyrics to fetched ones
-
-`--redownload` only helps files that already came from a provider. For files Whisper transcribed, ask the providers again without ever re-running Whisper:
+### Check tags (read-only)
 
 ```
-pyly "X:\Music\Queen\A Night at the Opera" --find-better --overwrite --keep-as-primary --fetch-only --fetch musicbrainz,musixmatch --allow-provider-site-scraping
-```
-
-`--find-better` picks only the Whisper-made `.lrc` files, `--overwrite` lets a fetched version replace them, and `--fetch-only` means a track no provider has synced lyrics for (say `I'm in Love with My Car`) is skipped and keeps its Whisper `.lrc`, instead of being transcribed again.
-
----
-
-## Checking and fixing file tags
-
-Sometimes a track's embedded tags are simply wrong — a ripper or a careless edit leaves `03 I'm in Love with My Car.flac` carrying the title *"You're My Best Friend"* (another track from the same album). Lyrics only line up when the tags are right, so PyLy can audit them and, if you ask, fix them.
-
-**Check (read-only):**
-
-```
-pyly "X:\Music\Queen\A Night at the Opera" --check-file-metadata
+pyly "R:\Local\Queen\A Night at the Opera" --check-tags
 ```
 
 For each file, PyLy compares the embedded **title, artist, album, year, and track** against what the file *should* contain and prints any mismatches. Nothing is written. PyLy works out the "correct" value in this order:
 
 1. **`.nfo` files** — if a Kodi/Lidarr-style `album.nfo` sits next to the files (or one folder up), its album title, artist, year, and per-track titles win. An `artist.nfo` in the artist folder (the one above the albums, where Lidarr writes it) supplies the artist name and each album's year, which is handy when an `album.nfo` is missing or doesn't list an artist.
-2. **Folder layout** — otherwise the artist/album/track come from the folder structure. Use `--layout lidarr|plex|flat` or a custom template to tell PyLy how your folders are arranged (same hint as `--fetch`). When a `.nfo` is present, its own location is used to work out the structure, so this usually just works without a `--layout` flag.
+2. **Folder layout** — otherwise the artist/album/track come from the folder structure. Use `--layout` to tell PyLy how your folders are arranged (same hint as `--get-lyrics`). When a `.nfo` is present, its own location is used to work out the structure, so this usually just works without a `--layout` flag.
 3. **Filename** — the track title falls back to the filename when the layout is `flat` or doesn't carry enough information.
 
 PyLy reads `.nfo` files leniently: the `<?xml?>` header is optional, XML entities and nested credits are handled, and malformed-but-common files (e.g. a stray `<rating: max=10>` tag) are still parsed. A `<artistdesc>`/`<biography>` block is treated as prose, never as the artist name. Mojibake in a tag (e.g. `Iâ€™m` for `I'm`, a common encoding accident) and characters a filename can't contain (`/ \ : * ? " < > |`) are normalised away, so they don't show up as phantom mismatches.
@@ -347,8 +224,8 @@ Matching is **fuzzy** (Levenshtein edit distance), so small spelling and punctua
 **Strict vs loose.** The check takes an optional mode:
 
 ```
-pyly "...\A Night at the Opera" --check-file-metadata          # strict (default)
-pyly "...\A Night at the Opera" --check-file-metadata loose
+pyly "R:\Local\Queen\A Night at the Opera" --check-tags          # strict (default)
+pyly "R:\Local\Queen\A Night at the Opera" --check-tags loose
 ```
 
 | Mode | Meaning |
@@ -356,21 +233,19 @@ pyly "...\A Night at the Opera" --check-file-metadata loose
 | `strict` *(default)* | The tag **must** match the `.nfo` field. |
 | `loose` | The tag **may** match the `.nfo` field **or** the folder layout, and trailing `(...)`/`[...]` qualifiers like `(Remastered 2011)`, `(Live)` or `(Bonus Track)` are ignored. |
 
-`loose` is handy when your `.nfo` files carry MusicBrainz medium/edition suffixes you don't keep in your tags. To fix under loose matching, combine the two flags: `pyly "...\A Night at the Opera" -z loose -Z`. On its own, `-Z` uses strict matching.
+`loose` is handy when your `.nfo` files carry MusicBrainz medium/edition suffixes you don't keep in your tags.
 
-The exit code is non-zero when any mismatch remains, so `--check-file-metadata` is usable as a library health check in scripts.
-
-**Fix (writes tags):**
+### Fix tags (writes tags)
 
 ```
 # Default: write tags in place, but back up each original first
-pyly "X:\Music\Queen\A Night at the Opera" --match-file-metadata
+pyly "R:\Local\Queen\A Night at the Opera" --fix-tags
 
 # Preview without changing anything
-pyly "...\A Night at the Opera" --match-file-metadata --dry-run
+pyly "R:\Local\Queen\A Night at the Opera" --fix-tags --preview
 ```
 
-`--match-file-metadata` (`-Z`) only rewrites the fields that are actually wrong, using the same `album.nfo → layout → filename` source order. It takes an optional mode:
+`--fix-tags` (`-f`) only rewrites the fields that are actually wrong, using the same `album.nfo → layout → filename` source order. It takes an optional mode:
 
 | Mode | What it does |
 |---|---|
@@ -378,76 +253,74 @@ pyly "...\A Night at the Opera" --match-file-metadata --dry-run
 | `direct` | Writes tags in place with no backup |
 | `copy` | Leaves the original untouched and writes a new `<name>.tagged.<ext>` |
 
+**Example — fix tags without backups:**
+
 ```
-pyly "...\A Night at the Opera" --match-file-metadata direct    # no backup
-pyly "...\A Night at the Opera" --match-file-metadata copy       # write alongside, keep original
+pyly "R:\Local\Queen\A Night at the Opera" --fix-tags --skip-backup
 ```
 
-> Apart from `--embed-art` (see [Embedding cover art](#embedding-cover-art)), this is the only mode in which PyLy modifies your audio files. Tags are rewritten with `ffmpeg -c copy`, so the audio stream itself is never re-encoded.
+> Apart from cover art (see [Cover art](#cover-art)), this is the only mode in which PyLy modifies your audio files. Tags are rewritten with `ffmpeg -c copy`, so the audio stream itself is never re-encoded.
 
 ---
 
-## Filling in album.nfo details from MusicBrainz
+## Filling in album.nfo
 
 Some `album.nfo` files are sparse — they carry a `musicbrainzalbumid` (or `musicbrainzreleasegroupid`) but little else: no track list, no album artist, no year. Since that MBID points at the exact release, PyLy can look it up on MusicBrainz and fill in the gaps:
 
 ```
 # Preview what would be added (nothing is written)
-pyly "X:\Music\Queen\A Night at the Opera" --update-nfo --dry-run
+pyly "R:\Local\Queen\A Night at the Opera" --get-info --preview
 
 # Actually write it
-pyly "X:\Music\Queen\A Night at the Opera" --update-nfo
+pyly "R:\Local\Queen\A Night at the Opera" --get-info
 
 # A whole library at once
-pyly "X:\Music" --recursive --update-nfo
+pyly "R:\Local" --include-subfolders --get-info
 ```
 
 For each `album.nfo`, PyLy reads the embedded MBID (preferring `musicbrainzalbumid`, falling back to resolving `musicbrainzreleasegroupid` to a release), fetches the release from MusicBrainz, and adds the **album artist, year, label, barcode**, and the full **track list** — each track with its position, title, credited artists (including `feat.` guests), duration, and recording MBID.
 
-It is **non-destructive by default**: anything already in the file (your `<rating>`, `<artistdesc>`, `<review>`, etc.) is left untouched, and only missing fields are added. Pass `--overwrite` to also replace existing fields that disagree with MusicBrainz and regenerate the track list. A backup is written to `album.nfo.bak` before any change, and `--dry-run` shows exactly what would be added without touching the file.
+It is **non-destructive by default**: anything already in the file (your `<rating>`, `<artistdesc>`, `<review>`, etc.) is left untouched, and only missing fields are added. Pass `--replace` to also replace existing fields that disagree with MusicBrainz and regenerate the track list. A backup is written to `album.nfo.bak` before any change, and `--preview` shows exactly what would be added without touching the file.
 
-To avoid hammering MusicBrainz, PyLy checks the file **locally first** and only looks a release up when a substantive field — the album artist, the year, or the track list — is actually missing. An `album.nfo` that already has all three is skipped without any network request, so re-running `--update-nfo` over a library only contacts MusicBrainz for the albums that still need it. (Incidental extras like label or barcode don't trigger a lookup on their own; pass `--overwrite` to force a full refresh.)
+To avoid hammering MusicBrainz, PyLy checks the file **locally first** and only looks a release up when a substantive field — the album artist, the year, or the track list — is actually missing. An `album.nfo` that already has all three is skipped without any network request, so re-running `--get-info` over a library only contacts MusicBrainz for the albums that still need it. (Incidental extras like label or barcode don't trigger a lookup on their own; pass `--replace` to force a full refresh.)
 
 > Needs internet. PyLy respects MusicBrainz's ~1 request/second rate limit, so a large library takes a moment per album.
 
 ---
 
-## Embedding cover art
+## Cover art
 
-`--embed-art` (`-g`) puts the album's front cover inside each audio file, so players and Plex show it even when the image file isn't next to the music:
-
-```
-pyly "X:\Music\Queen\A Night at the Opera" --embed-art
-pyly "X:\Music\Queen\A Night at the Opera" -g theaudiodb
-```
+PyLy can embed album cover art into your audio files, so players and Plex show it even when the image file isn't next to the music.
 
 > [!WARNING]
-> **Don't combine `-g` with a lyrics run** (`--fetch`/`-f`, `--base`/`-b`, Whisper transcription, `--redownload`/`-R`, `--keep-as-primary`/`-k`, `--keep-as-alternate`/`-K`, `--find-better`/`-F`). Lyrics runs often use `-o` to overwrite `.lrc` files, and `-o` *also* makes `-g` re-download and replace art you already have. And on a large library, every album's art lookup becomes part of a long Whisper job.
+> **Don't combine cover actions with lyric runs** (`--make-lyrics`, `--get-lyrics`, `--refresh-lyrics`, `--upgrade-lyrics`, `--use-lyrics`). Lyric runs often use `--replace` to overwrite `.lrc` files, and in the same run `--replace` *also* replaces cover art already embedded in your files. And on a large library, every album's art lookup becomes part of a long Whisper job.
 >
-> **Do combine it with the `.nfo` runs** (`-n`, `-Z`, `-z`) — that's the recommended way to use it. `-n` gives `album.nfo` its MusicBrainz id, `-Z` fixes the tags, and `-g` then looks the cover up by that exact id:
+> **Do combine it with the `.nfo` runs** (`--get-info`, `--fix-tags`, `--check-tags`) — that's the recommended way to use it. `--get-info` gives `album.nfo` its MusicBrainz id, `--fix-tags` fixes the tags, and `--use-cover` or `--get-cover` then looks the cover up by that exact id:
 >
 > ```
-> pyly "X:\Music\Queen\A Night at the Opera" -n -Z -z -g
+> pyly "R:\Local\Queen\A Night at the Opera" --get-info --fix-tags --use-cover --check-tags
 > ```
 
-**Where the image comes from.** PyLy looks for art **once per album folder** and reuses it for every track in it.
+### How it works
+
+PyLy looks for art **once per album folder** and reuses it for every track in it.
 
 - **Local image first.** If the folder already has an image named `album`, `poster`, `default`, `cover` or `folder` (in that priority order, any letter case) with the extension `jpg`, `jpeg`, `png`, `webp`, `bmp` or `gif`, PyLy embeds it and makes **no network request** for that album. When one name has several extensions, `jpg`/`jpeg` wins, then `png`, then the rest.
 - **Otherwise, the provider.** Only when there is no local image does PyLy ask the provider (`musicbrainz` unless you name another).
-- **Files that already have embedded art are skipped**, before any lookup. Re-running `-g` over a finished library costs nothing.
+- **Files that already have embedded art are skipped**, before any lookup. Re-running cover actions over a finished library costs nothing.
 
-**What `-o` does to `-g`.** `--overwrite` has *two* effects on `-g`: it asks the provider **even when a local image exists**, and it **replaces art already embedded** in the files. If the provider finds nothing, PyLy falls back to the local image and says so.
+**What `--replace` does to cover actions.** `--replace` has *two* effects: it asks the provider **even when a local image exists**, and it **replaces art already embedded** in the files. If the provider finds nothing, PyLy falls back to the local image and says so.
 
-| Local image in folder | `-o` | Image used | Files that already have art |
+| Local image in folder | `--replace` | Image used | Files that already have art |
 |---|---|---|---|
 | yes | off | the local image (no network) | skipped |
 | no | off | provider | skipped |
 | yes | **on** | provider; the local image if the provider finds nothing | **replaced** |
 | no | **on** | provider | **replaced** |
 
-Each file gets one line — `embedded (source: local cover.jpg)`, `embedded (source: theaudiodb)`, `(has art — skipped)` or `no art found` — and the run ends with a summary like `6 - EMBEDDED / 0 - HAS ART / 0 - NO ART / 0 - UNSUPPORTED / 0 - FAIL`. `--dry-run` resolves the art and reports what *would* be embedded without writing anything.
+Each file gets one line — `embedded (source: local cover.jpg)`, `embedded (source: theaudiodb)`, `(has art — skipped)` or `no art found` — and the run ends with a summary like `6 - EMBEDDED / 0 - HAS ART / 0 - NO ART / 0 - UNSUPPORTED / 0 - FAIL`. `--preview` resolves the art and reports what *would* be embedded without writing anything.
 
-**Providers.**
+### Providers
 
 | Provider | Key | Notes |
 |---|---|---|
@@ -461,134 +334,261 @@ Each file gets one line — `embedded (source: local cover.jpg)`, `embedded (sou
 
 Every match is checked before it's accepted: the artist and album title must fuzzy-match (`A Night At The Opera (2011 Remaster)` matches *A Night at the Opera*; a different album by the same band doesn't). `album.nfo` is the source for the artist and album, then the file's tags, then the folder names.
 
-**Keys.** A key goes after the **first `=`** — never `:` (that's `--fetch`'s provider:template separator). Everything after the first `=` is the key, so it may itself contain `=`, `:`, `/`, `+`, `$` or spaces:
+### Keys
+
+A key goes after the **first `=`** — never `:` (that's `--get-lyrics`'s provider:template separator). Everything after the first `=` is the key, so it may itself contain `=`, `:`, `/`, `+`, `$` or spaces:
 
 ```
-pyly "X:\Music\Queen\A Night at the Opera" -g theaudiodb=MyKey
-pyly "X:\Music\Queen\A Night at the Opera" -g spotify=my_client_id:my_client_secret
-pyly "X:\Music\Queen\A Night at the Opera" -g 'theaudiodb=API K3y/wi+h $pecial_chars'
+pyly "R:\Local\Queen\A Night at the Opera" --get-cover theaudiodb=MyKey
+pyly "R:\Local\Queen\A Night at the Opera" --get-cover spotify=my_client_id:my_client_secret
+pyly "R:\Local\Queen\A Night at the Opera" --get-cover 'theaudiodb=API K3y/wi+h $pecial_chars'
 ```
 
 PyLy looks for a key in this order (first found wins):
 
 | Where | Example |
 |---|---|
-| inline, after `=` | `-g theaudiodb=MyKey` |
+| inline, after `=` | `--get-cover theaudiodb=MyKey` |
 | `PYLY_<PROVIDER>_KEY` environment variable | `PYLY_THEAUDIODB_KEY`, `PYLY_DISCOGS_KEY`, `PYLY_SPOTIFY_KEY` (`client_id:client_secret`), `PYLY_YOUTUBE_KEY` |
 | `~/.pyly/<provider>-key` | a file holding just the key, e.g. `~/.pyly/discogs-key` |
 
-**Quoting keys in your shell.** In **PowerShell** and **bash**, `$` inside *double* quotes is expanded as a variable — `"theaudiodb=API K3y/wi+h $pecial_chars"` would lose `$pecial_chars`. Use **single** quotes there: `-g 'theaudiodb=API K3y/wi+h $pecial_chars'`. In **cmd.exe**, double quotes are fine (`-g "theaudiodb=API K3y/wi+h $pecial_chars"`), but `%` expands there, so a key containing `%` is safer in the env var or key file.
+**Quoting keys in your shell.** In **PowerShell** and **bash**, `$` inside *double* quotes is expanded as a variable — `"theaudiodb=API K3y/wi+h $pecial_chars"` would lose `$pecial_chars`. Use **single** quotes there: `--get-cover 'theaudiodb=API K3y/wi+h $pecial_chars'`. In **cmd.exe**, double quotes are fine (`--get-cover "theaudiodb=API K3y/wi+h $pecial_chars"`), but `%` expands there, so a key containing `%` is safer in the env var or key file.
 
 A key typed on the command line also ends up in your shell history and is visible in process lists while PyLy runs. For a real key, prefer the environment variable or `~/.pyly/<provider>-key`. PyLy never writes keys into `.lrc` files, caches or logs, and never prints them in errors.
 
-**Put the path first.** `-g`'s provider is optional, so `pyly -g "X:\Music\Queen\A Night at the Opera"` would read the path as a provider name. PyLy refuses that with an error rather than guessing — write the path before `-g`, or name the provider: `pyly -g musicbrainz "X:\Music\Queen\A Night at the Opera"`.
+### Supported audio formats for cover art
 
-**How it writes.** Art is embedded with `ffmpeg -c copy`, so the audio is never re-encoded and existing tags are kept. `mp3` (as ID3v2.3, titled *Album cover*), `flac` and `m4a` are supported. ffmpeg can't write cover art into `ogg`/`opus`, so PyLy warns once and skips those; other formats are skipped too. These containers only take JPEG or PNG, so a `webp`, `bmp` or `gif` image is converted to a temporary JPEG first — your image file is never changed.
-
-`-g` follows the same backup rule as `-Z`: the original is copied to `<file>.<ext>.bak` before the first write (an existing `.bak` is left alone, so it stays the true original). If you also pass `-Z direct`, you've said you don't want backups, so `-g` writes in place without one too. `-Z copy` doesn't carry over: `-g` still writes in place, with a `.bak`.
-
-`-g` only **embeds**. A downloaded image is kept in a temporary folder for the run and then deleted; PyLy never adds a `cover.jpg` (or any other file) to your music folders.
+`mp3` (as ID3v2.3, titled *Album cover*), `flac` and `m4a` are supported. ffmpeg can't write cover art into `ogg`/`opus`, so PyLy warns once and skips those; other formats are skipped too. These containers only take JPEG or PNG, so a `webp`, `bmp` or `gif` image is converted to a temporary JPEG first — your image file is never changed.
 
 ---
 
-## Advanced: fine-tuning the lyrics alignment
+## Refreshing and upgrading lyrics
 
-This section covers the controls that affect how PyLy matches a lyrics reference against Whisper's output. You probably won't need these unless the defaults aren't working well for a particular track.
+When PyLy fetches lyrics online, it saves the source URL inside the `.lrc` file. Later, if the lyrics database has been updated or corrected, you can refresh your files without re-running Whisper:
 
-### How matching works
+```
+# See what would be updated (nothing is written yet)
+pyly "R:\Local" --include-subfolders --refresh-lyrics --preview
 
-When you provide a lyrics reference (via `--base` or `--fetch`), PyLy goes through Whisper's lines one by one and looks for a close enough match in the reference. If it finds one, it swaps in the reference text but keeps Whisper's timestamp. If it doesn't find a match, it keeps whatever Whisper said.
+# Actually update the files
+pyly "R:\Local" --include-subfolders --refresh-lyrics --replace
+```
 
-The main controls:
+You can point this at a single `.lrc` file, a single audio file (PyLy will find the matching `.lrc`), or a whole folder. Without `--replace`, it's a dry run — PyLy checks whether new lyrics are available but doesn't save anything, which is useful for testing before committing to a bulk update.
 
-**`--base-threshold`** (default `0.82`) — How similar a Whisper line needs to be to a reference line before PyLy replaces it. Lower this if PyLy is being too conservative and leaving too many Whisper guesses in place. Raise it if it's replacing lines incorrectly.
+### Upgrading Whisper-made lyrics to fetched ones
 
-**`--base-strict`** — When set, any Whisper line that doesn't closely match a reference line gets dropped entirely rather than kept as-is. Useful when Whisper's output is so noisy that gaps are better than wrong words.
+`--refresh-lyrics` only helps files that already came from a provider. For files Whisper transcribed, ask the providers again without ever re-running Whisper:
 
-**`--base-window`** (default `12`) — How many lines ahead PyLy looks in the reference when trying to match a Whisper line. You'd lower this for very short, repetitive songs where a distant match might accidentally win.
+```
+pyly "R:\Local\Queen\A Night at the Opera" --upgrade-lyrics --replace
+```
 
-**`--base-max-merge`** (default `5`) — Sometimes Whisper splits one sung line into several short fragments. This controls how many Whisper fragments can be merged together to match a single reference line.
-
-**`--base-rescue` / `--no-base-rescue`** — After the main matching pass, PyLy does a second cleanup pass to catch any remaining junk lines. This is on by default. Turn it off with `--no-base-rescue` if you notice it removing lines it shouldn't.
-
-**`--base-diff-threshold`** (default `0.75`) — The rescue pass (and `--truth` patching) only runs if the overall transcript is similar enough to the reference. This is the cutoff. If a very noisy track isn't triggering the rescue pass, you could lower this — but carefully, since a lower value means PyLy is less certain the lyrics match the song.
-
-### Base vs. Truth
-
-There are two modes for using a lyrics reference, and which one to use depends on how much you trust Whisper vs. your lyrics file:
-
-**`--base`** — Whisper leads; the reference cleans up close mismatches. If Whisper drifts completely off course on a line, that line stays as Whisper heard it.
-
-**`--truth`** — Your lyrics file leads for sections where Whisper has clearly failed. If PyLy detects a run of lines where Whisper's output looks like garbled nonsense compared to the reference, it replaces that whole run with your lyrics and redistributes Whisper's timestamps across them. This only happens when PyLy is confident it's working with the right song — it won't blindly overwrite things if the lyrics file doesn't match.
+`--upgrade-lyrics` picks only the Whisper-made `.lrc` files (no `[PyLy:<url>]` line), and `--replace` lets a fetched version replace them. Tracks with no synced lyrics from any source are skipped and keep their Whisper `.lrc`.
 
 ---
 
-## Advanced: fetch templates and folder layout hints
+## Settings file and profiles
 
-By default, PyLy builds its search query from your audio file's tags (artist name, track title). If your tags are missing or incomplete, you can tell it how your folders are laid out instead.
+PyLy reads settings from `~/.pyly/pyly.ini`, or from the path in `PYLY_CONFIG`. The same file is used by `pyly.bat`, `pyly.sh`, and `python -m pyly`. A missing file is fine — built-in defaults apply.
 
-### Layout presets
+Priority: command line > chosen `[profile]` > `[defaults]` > built-in default.
 
-```
-pyly "X:\Music" --recursive --layout lidarr
-pyly "X:\Music" --recursive --layout plex
-pyly "X:\Music" --recursive --layout flat
-```
+Keys = long flag names without dashes prefix (e.g. `get-lyrics = musicbrainz,musixmatch`, `include-subfolders = yes`). Switches take yes/no/true/false/on/off/1/0. Value-or-switch actions (`get-lyrics`, `check-tags`, `get-cover`): `yes` = default value, `no` = off, other text = the value.
 
-`lidarr` and `plex` both expect an `Artist / Album / Track` folder structure, which is the most common. Leaving `--layout` out assumes the same structure, so `X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac` reads as artist `Queen`, album `A Night at the Opera`. `flat` means all files are in one folder with no subfolders. An unrecognized preset name prints a warning and falls back to `Artist / Album / Track`.
+The `[keys]` section holds source keys: `musixmatch = {"tokens":{...},"version":1}`, `theaudiodb = ...`. Never put keys on the command line (shell history). Key lookup order per source: `[keys]` entry, env `PYLY_<SOURCE>_KEY`, file `~/.pyly/<source>-key`.
 
-### Custom layout templates
-
-If your folder structure doesn't match a preset, you can describe it directly. Say your music keeps the artist and album in one folder, like `X:\Music\Queen - A Night at the Opera\11 - Bohemian Rhapsody.flac` — you'd write:
+**Example settings file:**
 
 ```
-pyly "X:\Music" --recursive --layout "X:\Music\{Artist Name} - {Album Title}\{track:00} - {Track Title}"
+[defaults]
+layout         = R:\Local\{Artist Name}\{Album Title}\{track:00} {Track Title}
+device         = cuda
+whisper-python = C:\Program Files\Python311\python.exe
+
+[keys]
+musixmatch = {"tokens":{...},"version":1}
+
+[nightly-lyrics]
+include-subfolders = yes
+get-lyrics     = musicbrainz,musixmatch
+allow-scraping = yes
+use-lyrics     = *.txt
+trust-lyrics   = yes
+drop-extras    = yes
+clean-up       = yes
+
+[nfo]
+include-subfolders = yes
+replace    = yes
+get-info   = yes
+fix-tags   = yes
+skip-backup = yes
+check-tags = strict
 ```
 
-PyLy reads the values directly from the folder and file names, so even without tags it knows the artist is "Queen", the album is "A Night at the Opera", and the track is "Bohemian Rhapsody".
-
-The tokens are `{Artist Name}`, `{Album Title}` (`{Album Name}` also works), `{Track Title}`, `{track:00}` (track number, zero-padded), `{medium:00}` (disc number), and `{Release Year}`. A token PyLy doesn't recognise is **skipped with a warning** rather than silently guessed — so a typo like `{Album Naem}` leaves the album unknown instead of quietly filling it from the wrong folder (which, under `--match-file-metadata`, would otherwise overwrite a correct tag).
-
-### Custom search queries
-
-You can also write the search query yourself using the same tokens:
+**Run examples:**
 
 ```
-pyly "X:\Music\Queen\A Night at the Opera\11 Bohemian Rhapsody.flac" --fetch "lrclib:{Artist Name} {Track Title}"
+pyly "R:\Local" --profile nfo
+pyly "R:\Local\Queen\A Night at the Opera" --profile nightly-lyrics
 ```
-
-Available tokens (filled from tags first, then inferred from path):
-
-`{Artist Name}` `{Album Title}` `{Track Title}` `{Track Number}` `{Disc Number}` `{Release Year}`
 
 ---
 
-## Advanced: what goes inside a .lrc file
+## How a run is ordered
 
-By default PyLy writes some metadata at the top of every `.lrc` file. This is mostly useful for players that can display it, and for PyLy's own re-download feature. You can turn it all off with `--no-lrc-header`.
+You can combine flags freely — PyLy always runs the work in the same sensible order, no matter what order you type them on the command line. Knowing that order helps you reason about a command before you run it.
 
-A typical header looks like this:
+Picture this folder:
 
 ```
-[ar:Queen]
-[al:A Night at the Opera]
-[ti:Bohemian Rhapsody]
-[length:05:55.00]
-[url:https://lrclib.net/api/get/12345]
-[id:12345]
-[PyLy:https://lrclib.net/api/get/12345]
-[re:PyLy]
-[by:PyLy]
+R:\Local\Queen\A Night at the Opera\
+    album.nfo
+    03 I'm in Love With My Car.mp3     (3:05)
+    11 Bohemian Rhapsody.mp3           (5:55)
 ```
 
-- `[ar:]`, `[al:]`, `[ti:]` — artist, album, and track title
-- `[length:]` — duration of the track, measured from your audio file (or from the provider if ffprobe isn't available)
-- `[url:]` — where the lyrics came from
-- `[id:]` — the provider's internal ID for this track
-- `[PyLy:]` — the URL PyLy uses when you run `--redownload`
-- `[re:]` and `[by:]` — mark the file as PyLy-generated
+```mermaid
+flowchart TD
+    S["Step 0 · Settings — apply throughout<br/>--include-subfolders · --replace · --preview · --write-log · --skip-backup · --skip-header · --allow-scraping · --color · model · device · whisper-python · layout · language · profile · tuning knobs"] -.-> A
+    A["1 · Select files<br/>&lt;path&gt; · --include-subfolders (feeds every stage)"] --> B
+    B["2 · Tidy metadata<br/>--get-info → --fix-tags → --get-cover/--use-cover → --check-tags"] --> C
+    C["3 · Get reference lyrics<br/>--upgrade-lyrics filter · --refresh-lyrics · --get-lyrics sources · --use-lyrics · --keep-both · --trust-lyrics · --drop-extras"] --> D
+    D["4 · Transcribe<br/>Whisper → .srt → reduced (skipped if --keep-both has synced)"] --> E
+    E["5 · Align and patch<br/>--trust-lyrics · --drop-extras · match-score · match-window · merge-limit · rescue-score · --skip-rescue"] --> F
+    F["6 · Write outputs<br/>.lrc + header (unless --skip-header) · .fetched.lrc sidecar (--keep-both)"] --> G
+    G["7 · Clean up<br/>--clean-up delete intermediate .srt files"]
+```
 
-If you used the `musicbrainz` provider, there will also be a `[mbid:]` tag with the MusicBrainz recording ID.
+**Step 0 — Settings.** Everything that configures *how* the run behaves rather than performing a step: traversal (`--include-subfolders`), write policy (`--replace` — which for `--get-cover` also means "ask the provider and replace existing art"), simulate (`--preview`), logging (`--write-log`), backup policy (`--skip-backup`), header inclusion (`--skip-header`), scraping allowance (`--allow-scraping`), color output (`--color`), Whisper choices (`--model`, `--device`, `--whisper-python`), folder-layout hint (`--layout`), language expectation (`--language`), profile selection (`--profile`), and the alignment-tuning knobs (`--match-score`, `--match-window`, `--merge-limit`, `--rescue-score`, `--skip-rescue`).
+
+1. **Select files.** Resolve `<path>` (with `--include-subfolders` for subfolders). This file list feeds every stage below.
+2. **Tidy metadata.** First `--get-info` fills in `album.nfo` from MusicBrainz, then `--fix-tags` corrects the audio tags from it, then `--get-cover`/`--use-cover` embeds cover art (looked up with the corrected tags and the `.nfo`'s MusicBrainz id), then `--check-tags` reports mismatches. Doing this first means later steps see clean data — e.g. PyLy learns that `11 Bohemian Rhapsody.mp3` should be titled *Bohemian Rhapsody* with a length of `5:55`.
+3. **Get reference lyrics.** `--upgrade-lyrics` first narrows *the lyrics pipeline only* to files whose existing `.lrc` was Whisper-made (the metadata steps above always see every file). Then reuse an embedded URL (`--refresh-lyrics`), fetch online (`--get-lyrics`, asking each listed source in turn), or read a local file (`--use-lyrics`); `--keep-both` decides whether fetched synced lyrics become the output or a sidecar; `--trust-lyrics` and `--drop-extras` modify how the reference is used.
+4. **Transcribe.** Run Whisper to a `.srt` and reduce it — skipped when `--keep-both` already supplied synced lyrics.
+5. **Align and patch.** Match the reference against Whisper's lines and apply the rescue/truth passes.
+6. **Write outputs.** Save `I'm in Love With My Car.lrc` and `Bohemian Rhapsody.lrc` (with header tags unless `--skip-header`), plus a `.fetched.lrc` sidecar if `--keep-both`.
+7. **Clean up.** With `--clean-up`, delete the intermediate `.srt` files.
+
+It all happens in **one pass**, in the order above. A "do everything" command for the album:
+
+```
+pyly "R:\Local\Queen\A Night at the Opera" --include-subfolders --get-info --fix-tags --get-cover --check-tags --make-lyrics --replace
+```
+
+enriches the `.nfo` from MusicBrainz, fixes the audio tags from it, then fetches a lyrics reference, transcribes, aligns, writes the `.lrc` files, and deletes the intermediates — each stage in turn.
+
+For cover art, keep it to a metadata run instead (see the warning in [Cover art](#cover-art)):
+
+```
+pyly "R:\Local\Queen\A Night at the Opera" --include-subfolders --get-info --fix-tags --use-cover --check-tags
+```
+
+> **Metadata-only shortcut.** If you pass *only* metadata flags (`--get-info`/`--fix-tags`/`--get-cover`/`--use-cover`/`--check-tags`) and no lyrics flag, PyLy stops after step 2 instead of transcribing every file — so a quick `pyly "R:\Local" --include-subfolders --check-tags` just reports tag problems and exits. Add a lyrics flag (`--make-lyrics`, `--get-lyrics`, `--refresh-lyrics`, `--upgrade-lyrics`, or `--use-lyrics`) to carry on into steps 3–7. The exit code is the worst of the stages that ran, so a tag mismatch still surfaces as a non-zero exit even when the lyrics were written fine.
+
+---
+
+## All flags
+
+Flags are grouped by purpose. The **Letter** column shows the short form (if any). The **Default** column shows the value if neither command line nor settings file sets it.
+
+### Lyrics
+
+| Flag | Letter | What it does | Default |
+|---|---|---|---|
+| `--make-lyrics` | `-m` | create .lrc lyrics: download synced lyrics first, then run Whisper for any track still without them | (when no action given) |
+| `--get-lyrics` | `-g` | download lyrics only (never Whisper), trying each source in order | (empty string = default sources) |
+| `--use-lyrics` | `-u` | use a local lyrics text file (or pattern) as the reference Whisper is matched against | (none) |
+| `--refresh-lyrics` | `-y` | download lyrics again from the address saved in each .lrc and save | false |
+| `--upgrade-lyrics` | (none) | replace Whisper-made .lrc files wherever a source has synced lyrics | false |
+| `--keep-both` | `-k` | save downloaded lyrics as `<name>.fetched.lrc` and still run Whisper for the .lrc | false |
+| `--trust-lyrics` | `-t` | treat the reference lyrics as correct when patching Whisper's text | false |
+| `--drop-extras` | `-x` | drop Whisper lines that match nothing in the reference lyrics | false |
+
+### Tags, album.nfo, and cover
+
+| Flag | Letter | What it does | Default |
+|---|---|---|---|
+| `--get-info` | `-e` | fill missing album.nfo details from MusicBrainz (with --replace, overwrite details already there) | false |
+| `--fix-tags` | `-f` | rewrite audio tags that don't match album.nfo | false |
+| `--check-tags` | `-c` | report tags that don't match album.nfo; writes nothing. MODE: strict (default) or loose. | strict |
+| `--get-cover` | `-v` | download cover art and embed it, falling back to the folder's own image when the source finds nothing. Default source: musicbrainz. | (none) |
+| `--use-cover` | `-s` | embed the folder's album/poster/default/cover/folder image. Never downloads. | false |
+
+### Run control
+
+| Flag | Letter | What it does | Default |
+|---|---|---|---|
+| `--include-subfolders` | `-i` | process every folder under the path, not just the path itself | false |
+| `--replace` | `-r` | replace outputs that already exist: .lrc files, album.nfo details, embedded art | false |
+| `--preview` | `-p` | show what would happen and change nothing | false |
+| `--clean-up` | `-n` | delete the temporary .srt files Whisper leaves behind | false |
+| `--write-log` | `-w` | save a log file next to each .lrc | false |
+| `--skip-backup` | `-b` | don't keep a .bak copy before rewriting tags or embedding art | false |
+| `--skip-header` | (none) | leave the tag lines out of the .lrc header | false |
+| `--allow-scraping` | (none) | allow sources that read websites instead of a public API (lyricradar, genius, musixmatch) | false |
+| `--list-sources` | (none) | print the lyric and cover sources, then stop | false |
+
+### Settings (nouns)
+
+| Flag | Letter | What it does | Default |
+|---|---|---|---|
+| `--profile` | (none) | use a [NAME] section of the settings file (~/.pyly/pyly.ini or $PYLY_CONFIG) | (none) |
+| `--language` | `-l` | language Whisper should expect, e.g. en. Whisper guesses when it's not set. | (none) |
+| `--layout` | `-a` | how folders are arranged: lidarr, plex, flat, or a template such as R:\Local\{Artist Name}\{Album Title}\{track:00} {Track Title}. Default: Artist/Album/Track. | (none) |
+| `--model` | `-o` | Whisper model size. Default: medium. | medium |
+| `--device` | `-d` | where Whisper runs. Whisper decides when it's not set. | (none) |
+| `--whisper-python` | (none) | the Python that has Whisper installed. Default: $PYLY_WHISPER_PYTHON, then the Python running PyLy. | (none) |
+| `--color` | (none) | colored output. Default: auto (on in a terminal). | auto |
+
+### Fine-tuning for matching reference lyrics (rarely used, no letters)
+
+| Flag | Letter | What it does | Default |
+|---|---|---|---|
+| `--match-score` | (none) | how similar a Whisper line must be to a reference line to be replaced by it | 0.82 |
+| `--match-window` | (none) | how many reference lines ahead to look for a match | 12 |
+| `--merge-limit` | (none) | most Whisper lines that may merge into one reference line | 5 |
+| `--rescue-score` | (none) | overall similarity needed before the rescue pass runs | 0.75 |
+| `--skip-rescue` | (none) | turn off the rescue pass after matching | false |
+
+---
+
+## Moving from PyLy 1
+
+Old flag → new flag. Every row comes from the facts.
+
+| Old flag (PyLy 1) | New flag (PyLy 2) | Notes |
+|---|---|---|
+| `-r/--recursive` | `-i/--include-subfolders` | |
+| `-o/--overwrite` | `-r/--replace` | |
+| `-q/--dry-run` | `-p/--preview` | |
+| `-c/--clean` | `-n/--clean-up` | |
+| `-v/--log` | `-w/--write-log` | |
+| `-m/--model` | `-o/--model` (default now medium) | |
+| `-l/--language` | `-l/--language` | |
+| `-d/--device` | `-d/--device` | |
+| `-y/--layout` | `-a/--layout` | |
+| `-f/--fetch` | `-g/--get-lyrics` (download only) or `-m/--make-lyrics` (download then Whisper; old default) | |
+| `-k/--keep-as-primary` | `--make-lyrics` (default behavior) | |
+| `-K/--keep-as-alternate` | `-k/--keep-both` | |
+| `--fetch-only` | `--get-lyrics` alone | |
+| `-F/--find-better` | `--upgrade-lyrics` | |
+| `-R/--redownload` | `-y/--refresh-lyrics` (saves by default) | |
+| `-b/--base` | `-u/--use-lyrics` | |
+| `-u/--truth` | `-t/--trust-lyrics` | |
+| `-s/--base-strict` | `-x/--drop-extras` | |
+| `-t/-w/-x/-i` base tuning | `--match-score/--match-window/--merge-limit/--rescue-score` | |
+| `-e/-E` rescue | `--skip-rescue` | |
+| `-a/-A` header | `--skip-header` | |
+| `-n/--update-nfo` | `-e/--get-info` | |
+| `-Z/--match-file-metadata` | `-f/--fix-tags` (+ `-b/--skip-backup` for old 'direct') | |
+| `-z/--check-file-metadata` | `-c/--check-tags` | |
+| `-g/--embed-art` | `-s/--use-cover` or `-v/--get-cover` | |
+| `-p/--list-providers` | `--list-sources` | |
+| `--allow-provider-site-scraping`/`--apsss` | `--allow-scraping`/`--apsss` | |
+| `--musixmatch-token` | `[keys] musixmatch` | |
+| `--online`, `--base-lyrics`, `--lyrics` | removed | |
 
 ---
 
@@ -605,105 +605,3 @@ PyLy/
   ff/
     ffmpeg.exe
     ffprobe.exe
-```
-
-PyLy will find them there. This keeps things self-contained and doesn't affect anything else on your system.
-
-If PyLy can't find ffmpeg anywhere, it will tell you clearly rather than fail silently.
-
----
-
-## How a run is ordered
-
-You can combine flags freely — PyLy always runs the work in the same sensible order, no matter what order you type them on the command line. Knowing that order helps you reason about a command before you run it.
-
-Picture this folder:
-
-```
-X:\Music\Queen\A Night at the Opera\
-    album.nfo
-    03 I'm in Love with My Car.flac     (3:05)
-    11 Bohemian Rhapsody.flac           (5:55)
-```
-
-```mermaid
-flowchart TD
-    S["Step 0 · Settings — apply throughout<br/>-r · -o · -q · -v · -m · -l · -d · -y · -a/-A · --color · base tuning"] -.-> A
-    A["1 · Select files<br/>&lt;path&gt; · -r recurse (feeds every stage)"] --> B
-    B["2 · Tidy metadata<br/>-n enrich album.nfo → -Z fix tags → -g embed art → -z check"] --> C
-    C["3 · Get reference lyrics<br/>-F Whisper-only filter · -R · -f · -b · -k/-K role"] --> D
-    D["4 · Transcribe<br/>Whisper → .srt → reduced (skipped if -k has synced)"] --> E
-    E["5 · Align and patch<br/>-s strict · thresholds · -u truth · -e/-E rescue"] --> F
-    F["6 · Write outputs<br/>.lrc + header (-a/-A) · .fetched.lrc sidecar (-K)"] --> G
-    G["7 · Clean up<br/>-c delete intermediate .srt files"]
-```
-
-**Step 0 — Settings.** Everything that configures *how* the run behaves rather than performing a step: traversal (`-r`), write policy (`-o` — which for `-g` also means "ask the provider and replace existing art"), simulate (`-q`), logging (`-v`), Whisper choices (`-m`/`-l`/`-d`), the folder-layout hint (`-y`), header on/off (`-a`/`-A`), colour, and the alignment-tuning knobs (`-t`/`-w`/`-x`/`-i`/`-e`/`-E`).
-
-1. **Select files.** Resolve `<path>` (with `-r` for subfolders). This file list feeds every stage below.
-2. **Tidy metadata.** First `-n` fills in `album.nfo` from MusicBrainz, then `-Z` corrects the audio tags from it, then `-g` embeds cover art (looked up with the corrected tags and the `.nfo`'s MusicBrainz id), then `-z` checks the tags. Doing this first means later steps see clean data — e.g. PyLy learns that `11 Bohemian Rhapsody.flac` should be titled *Bohemian Rhapsody* with a length of `5:55`.
-3. **Get reference lyrics.** `-F` first narrows *the lyrics pipeline only* to files whose existing `.lrc` was Whisper-made (the metadata steps above always see every file). Then reuse an embedded URL (`-R`), fetch online (`-f`, asking each listed provider in turn), or read a local file (`-b`); `-k`/`-K` decide whether fetched synced lyrics become the output or a sidecar.
-4. **Transcribe.** Run Whisper to a `.srt` and reduce it — skipped when `-k` already supplied synced lyrics.
-5. **Align and patch.** Match the reference against Whisper's lines and apply the rescue/truth passes.
-6. **Write outputs.** Save `I'm in Love with My Car.lrc` and `Bohemian Rhapsody.lrc` (with header tags unless `-A`), plus a `.fetched.lrc` sidecar if `-K`.
-7. **Clean up.** With `-c`, delete the intermediate `.srt` files.
-
-It all happens in **one pass**, in the order above. A "do everything" command for the album:
-
-```
-pyly "X:\Music\Queen\A Night at the Opera" -r -n -Z -f -c
-```
-
-enriches the `.nfo` from MusicBrainz, fixes the audio tags from it, then fetches a lyrics reference, transcribes, aligns, writes the `.lrc` files, and deletes the intermediates — each stage in turn.
-
-For cover art, keep it to a metadata run instead (see the warning in [Embedding cover art](#embedding-cover-art)):
-
-```
-pyly "X:\Music\Queen\A Night at the Opera" -n -Z -z -g
-```
-
-> **Metadata-only shortcut.** If you pass *only* metadata flags (`-n`/`-Z`/`-g`/`-z`) and no lyrics flag, PyLy stops after step 2 instead of transcribing every file — so a quick `pyly "…" -r -z` just reports tag problems and exits. Add a lyrics flag (`-f`, `-b`, `-R`, `-k`, or `-K`) to carry on into steps 3–7. The exit code is the worst of the stages that ran, so a tag mismatch still surfaces as a non-zero exit even when the lyrics were written fine.
-
----
-
-## All flags
-
-| Flag | Short | Description |
-|---|---|---|
-| `<path>` | | Audio file, `.lrc` file (with `--redownload`), or folder |
-| `--recursive` | `-r` | Also process subfolders |
-| `--overwrite` | `-o` | Replace existing output instead of leaving it in place: existing `.lrc` files, and — with `--update-nfo` — existing `album.nfo` fields. With `--embed-art`, two effects: fetch from the provider even when a local image exists, **and** replace art already embedded. Also required by `--redownload` to write |
-| `--clean` | `-c` | Delete the intermediate `.srt` files after finishing |
-| `--dry-run` | `-q` | Show what would happen without doing anything |
-| `--log` | `-v` | Save a detailed log file alongside each `.lrc` |
-| `--model <n>` | `-m` | Whisper model size: `tiny` `base` `small` `medium` `large`. Default: `small` |
-| `--language <code>` | `-l` | Force a language, e.g. `en`. Whisper auto-detects if omitted |
-| `--device <cpu\|cuda>` | `-d` | Run Whisper on CPU or GPU |
-| `--whisper-python <python>` | | The Python that runs Whisper (needs `openai-whisper` + `torch`). Default: `PYLY_WHISPER_PYTHON`, then the Python running PyLy. PyLy checks once per run and stops with a clear error if Whisper can't be imported |
-| `--fetch [provider[,provider…]]` | `-f` | Fetch lyrics online to use as a reference. Providers: `lrclib` (default), `musicbrainz`, `lyricradar`, `genius`, `musixmatch`. A comma list is tried in order until one finds lyrics (with `-k`/`-K`, until one has synced lyrics) |
-| `--keep-as-primary` | `-k` | Use fetched synced lyrics as the output; skip Whisper if available |
-| `--keep-as-alternate` | `-K` | Save fetched synced lyrics as `.fetched.lrc`; still generate Whisper output |
-| `--fetch-only` | | Never run Whisper. With `-k`, write fetched synced lyrics when a provider has them; otherwise skip the file and leave any existing `.lrc` untouched. Requires `-k` |
-| `--redownload` | `-R` | Re-fetch lyrics from the URL saved in existing `.lrc` files. Requires `--overwrite` to write |
-| `--list-providers` | `-p` | Print available lyric and cover-art providers and exit |
-| `--find-better` | `-F` | Limit the **lyrics pipeline** to audio files whose existing `.lrc` was Whisper-transcribed (no external URL tag). Useful with `--fetch` to upgrade Whisper-only files. Does not affect the metadata steps (`-n`/`-Z`/`-z`) |
-| `--check-file-metadata [mode]` | `-z` | Report files whose embedded tags (title, artist, album, year, track) don't match `album.nfo`/`artist.nfo` / the folder layout / the filename. `mode`: `strict` (default) or `loose` (also accepts the folder layout and ignores trailing `(...)` qualifiers). Read-only |
-| `--match-file-metadata [mode]` | `-Z` | Fix mismatched tags by writing the expected values into the file. `mode`: `backup` (default, keeps a `.bak`), `direct`, or `copy`. With `--embed-art`, one of only two flags that modify your audio |
-| `--update-nfo` | `-n` | Fill missing `album.nfo` data (album artist, year, barcode, full track list) by looking up its embedded MusicBrainz id. Non-destructive unless `--overwrite`; backs up `album.nfo.bak`; honours `--dry-run`. Never creates an `album.nfo`; a folder without one is reported and is not an error (exit code 0) |
-| `--embed-art [provider[=key]]` | `-g` | Embed album cover art into `mp3`/`flac`/`m4a` files. Uses a local `album`/`poster`/`default`/`cover`/`folder` image if the folder has one (no network), else the provider; skips files that already have art. With `-o`: provider first (local image as fallback) and existing art replaced. Providers: `musicbrainz` (default), `theaudiodb`, `apple`, `discogs`, `spotify`, `youtube`. The key follows the first `=`; default `PYLY_<PROVIDER>_KEY`, then `~/.pyly/<provider>-key`. Keeps a `.bak` unless `-Z direct`. Put the path first. See [Embedding cover art](#embedding-cover-art) |
-| `--base <file>` | `-b` | Plain text lyrics file to use as a reference |
-| `--lyrics <file>` | | Alias for `--base` |
-| `--truth` | `-u` | Trust the lyrics reference enough to replace garbled Whisper sections |
-| `--base-strict` | `-s` | Drop any Whisper line that doesn't match the reference, instead of keeping it |
-| `--base-threshold <0..1>` | `-t` | How close a match needs to be before PyLy replaces it. Default: `0.82` |
-| `--base-window <N>` | `-w` | How many lines ahead PyLy looks in the reference. Default: `12` |
-| `--base-max-merge <N>` | `-x` | How many Whisper fragments can merge into one reference line. Default: `5` |
-| `--base-diff-threshold <0..1>` | `-i` | Overall similarity needed to trigger the rescue/truth pass. Default: `0.75` |
-| `--base-rescue` | `-e` | Run the cleanup pass after matching (on by default) |
-| `--no-base-rescue` | `-E` | Turn off the cleanup pass |
-| `--layout <hint>` | `-y` | Folder layout hint when tags are missing: `lidarr` `plex` `flat` or a custom template |
-| `--lrc-header` | `-a` | Write metadata tags into the `.lrc` header (on by default) |
-| `--no-lrc-header` | `-A` | Don't write header tags |
-| `--allow-provider-site-scraping` | `--apsss` | Allow providers that work by scraping websites. Off by default |
-| `--musixmatch-token <token\|file>` | | Login token for `musixmatch` (the `musixmatchUserToken` cookie, or a file holding it). Default: `PYLY_MUSIXMATCH_TOKEN`, then `~/.pyly/musixmatch-token` |
-| `--color` / `--no-color` | | Force color output on or off |

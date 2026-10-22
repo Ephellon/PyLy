@@ -27,7 +27,7 @@ def collect_audio_files(
    Rules:
    - Files are accepted only if they are known audio types
    - Directories yield audio files inside them
-   - --recursive controls deep traversal
+   - --include-subfolders controls deep traversal
    - Duplicates are removed
    - Output is deterministic
    """

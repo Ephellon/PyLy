@@ -3,7 +3,7 @@ File-metadata checking and matching.
 
 Two responsibilities, both standalone modes (no Whisper involved):
 
-* check  (--check-file-metadata / -z)
+* check  (--check-tags / -c)
     Read the audio file's embedded tags and compare them against what the
     file *should* contain, deriving the expected values from (in priority):
         1. an accompanying ``album.nfo`` / ``artist.nfo`` (Kodi/Lidarr style)
@@ -16,14 +16,14 @@ parser: real-world Kodi/Lidarr NFOs are frequently not well-formed XML (e.g.
 ``<rating: max=10>8</rating>``), the ``<?xml?>`` header is optional, and the
 schemas are flat enough that regex extraction is reliable.
 
-* match  (--match-file-metadata / -Z)
+* match  (--fix-tags / -f)
     Same comparison, but the expected values are written back into the audio
     file's tags via ffmpeg.  Three write modes:
         backup  write in place, but copy the original to <file>.<ext>.bak first
         direct  write in place, no backup
         copy    leave the original untouched, write <stem>.tagged.<ext>
 
-* update-nfo  (--update-nfo / -n)
+* update-nfo  (--get-info / -e)
     Enrich an album.nfo from the MusicBrainz release its embedded MBID points
     at: add the album artist, year, label, barcode, and the full track list.
     Non-destructive by default; backs up album.nfo.bak before writing.

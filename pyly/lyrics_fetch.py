@@ -47,11 +47,11 @@ class Provider:
    name
        Canonical key used on the CLI (e.g. "lrclib").
    description
-       One-line human description, shown by --list-providers.
+       One-line human description, shown by --list-sources.
    requires_scraping
        True when the provider works by scraping a website rather than
        calling a documented/public API.  PyLy refuses to use scraping
-       providers unless --allow-provider-site-scraping is explicitly passed.
+       providers unless --allow-scraping is explicitly passed.
    fetch_fn
        Callable[[str, ...], FetchedLyrics | None].  Signature:
            fetch_fn(query: str, *, log_fn=None) -> FetchedLyrics | None
@@ -186,8 +186,8 @@ def fetch_lyrics_data(
    prefer_synced: bool = False,
 ) -> FetchedLyrics | None:
    """
-   Try each provider in the --fetch chain in order; the first that returns
-   lyrics wins. With prefer_synced (--keep-as-primary/--keep-as-alternate),
+   Try each provider in the --get-lyrics source list in order; the first that returns
+   lyrics wins. With prefer_synced (--make-lyrics, --keep-both),
    a plain-text-only result is held back while later providers are asked
    for synced lyrics, and returned only if none has them.
    """
@@ -254,7 +254,7 @@ def _fetch_from_provider(
    if provider.requires_scraping and not config.allow_scraping:
       _log_warn(
          f"FETCH: provider '{provider_name}' requires site scraping. "
-         f"Pass --allow-provider-site-scraping to enable it.",
+         f"Pass --allow-scraping to enable it.",
          log_fn=log_fn,
       )
       return None
@@ -1111,7 +1111,7 @@ def _log_warn(message: str, log_fn=None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Scraping providers (require --allow-provider-site-scraping)
+# Scraping providers (require --allow-scraping)
 #
 # These talk to a site's undocumented browser backend / embedded page state
 # rather than a public API, so they are gated behind the scraping opt-in.
@@ -1356,12 +1356,10 @@ def _genius_flatten(node, out: list[str]) -> None:
 # Flow: matcher.track.get (artist/title/album) -> track.subtitle.get (LRC);
 # if the match has no synced lyrics, track.search for a version that does;
 # failing that, track.lyrics.get (plain). The [PyLy:<url>] tag stores a
-# token-free track.get URL so --redownload can find the same track again.
+# token-free track.get URL so --refresh-lyrics can find the same track again.
 
 _MXM_API = "https://apic.musixmatch.com/ws/1.1/"
 _MXM_APP_IDS = ("mxm-com-v1.0", "community-app-v1.0", "mxm-pro-web-v1.0", "mxm-account-v1.0")
-_MXM_TOKEN_ENV = "PYLY_MUSIXMATCH_TOKEN"
-_MXM_TOKEN_FILE = Path.home() / ".pyly" / "musixmatch-token"
 _MXM_MIN_INTERVAL_S = 0.5
 _MXM_HEADERS = {
    "Accept": "application/json",
@@ -1376,21 +1374,24 @@ _mxm_last_call = 0.0
 
 
 def set_musixmatch_token(value: str | None) -> None:
-   """Token from --musixmatch-token (wins over the env var and token file)."""
+   """Token handed over by the command line (wins over get_key lookups)."""
    global _mxm_token_override
    _mxm_token_override = value or None
 
 
 def _mxm_credentials() -> tuple[str, str] | None:
    """
-   Resolve (app_id, token). Sources, first found wins: --musixmatch-token,
-   $PYLY_MUSIXMATCH_TOKEN, ~/.pyly/musixmatch-token. Each may hold a bare
-   token, the `musixmatchUserToken` cookie (with or without the name, or the
-   whole Cookie header), or the path to a file holding any of those.
+   Resolve (app_id, token). The token comes from settings.get_key("musixmatch")
+   ([keys] in the settings file, then $PYLY_MUSIXMATCH_KEY, then
+   ~/.pyly/musixmatch-key), unless the command line already handed one over
+   with set_musixmatch_token(). It may be a bare token, the
+   `musixmatchUserToken` cookie (with or without the name, or the whole Cookie
+   header), or the path to a file holding any of those.
    """
-   raw = _mxm_token_override or os.environ.get(_MXM_TOKEN_ENV)
-   if not raw and _MXM_TOKEN_FILE.is_file():
-      raw = _MXM_TOKEN_FILE.read_text(encoding="utf-8", errors="replace")
+   raw = _mxm_token_override
+   if not raw:
+      from .settings import get_key
+      raw = get_key("musixmatch")
    raw = (raw or "").strip()
    if not raw:
       return None
@@ -1433,8 +1434,9 @@ def _mxm_call(method: str, *, log_fn=None, **params) -> dict | None:
    if not creds:
       _mxm_disabled_reason = "no token"
       _log_warn(
-         "musixmatch: no login token. Pass --musixmatch-token, set "
-         f"{_MXM_TOKEN_ENV}, or save the musixmatchUserToken cookie to {_MXM_TOKEN_FILE}",
+         "musixmatch: no login token. Add the musixmatchUserToken cookie as "
+         "'musixmatch = ...' under [keys] in the settings file (~/.pyly/pyly.ini), "
+         "set PYLY_MUSIXMATCH_KEY, or save it to ~/.pyly/musixmatch-key",
          log_fn=log_fn,
       )
       return None
@@ -1642,7 +1644,7 @@ def _register_providers() -> None:
          name="musixmatch",
          description=(
             "Musixmatch — synced LRC (falls back to plain) via the site's app "
-            "backend. Needs a musixmatch.com login token (--musixmatch-token)."
+            "backend. Needs a musixmatch.com login token ([keys] musixmatch in the settings file)."
          ),
          requires_scraping=True,
          fetch_fn=_fetch_musixmatch,

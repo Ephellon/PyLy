@@ -1,20 +1,20 @@
 """
-Cover art: --embed-art / -g.
+Cover art: --use-cover / --get-cover.
 
 Finds an album's front cover and embeds it into the audio files.
 
 Where the image comes from (resolved once per album folder, never per track):
 
-* without --overwrite
-    A local image in the audio file's folder wins:
+* --use-cover (ArtResolver prefer="local")
+    The audio file's folder image only, never a download:
     ``(album|poster|default|cover|folder).<jpg|jpeg|png|webp|bmp|gif>``, in
-    that priority order, case-insensitive. Only when there is none is the
-    provider asked. Files that already carry embedded art are skipped before
-    any of this happens, so a finished album costs no network calls at all.
-* with --overwrite
-    The provider is asked even when a local image exists, and existing
-    embedded art is replaced. When the provider finds nothing, the local
-    image is used instead.
+    that priority order, case-insensitive.
+* --get-cover (prefer="online")
+    The source is asked first; when it finds nothing, the folder image is
+    used instead.
+
+Files that already carry embedded art are skipped before any of this happens,
+unless --replace is given, so a finished album costs no network calls at all.
 
 Downloaded images live in a temp folder for the run and are never written into
 the music folder. ffmpeg embeds with stream copy (the audio is never
@@ -42,11 +42,9 @@ the provider's own API host, and never printed, cached or logged.
 
 from __future__ import annotations
 
-import argparse
 import base64
 import collections
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -101,7 +99,7 @@ _MAX_IMAGE_BYTES = 30 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
-# --embed-art argument parsing
+# --get-cover value parsing
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -114,20 +112,14 @@ class ArtSpec:
       return f"ArtSpec(provider={self.provider!r}, key={'***' if self.key else None})"
 
 
-_PATHLIKE_RX = re.compile(r"^(?:[A-Za-z]:[\\/]|[\\/~.])")
-
-
-def parse_embed_art_arg(value) -> ArtSpec:
+def split_source_key(value: str | None) -> ArtSpec:
    """
-   argparse ``type=`` for --embed-art: ``provider`` or ``provider=KEY``.
+   Parse a --get-cover value: ``source`` or ``source=KEY``.
 
-   Only '=' separates the key, split on the first one, so a key may itself
-   contain '=', ':', '/', '+', '$' or spaces. ':' is never a separator here
-   (--fetch uses it for provider:template); ``theaudiodb:KEY`` is rejected
-   with a hint. Error messages never echo a key.
+   Only the first '=' separates the key, so a key may itself contain '=',
+   ':', '/', '+', '$' or spaces. ``theaudiodb:KEY`` is rejected with a hint
+   (':' never separates a key). Raises ValueError; messages never echo a key.
    """
-   if isinstance(value, ArtSpec):
-      return value
    raw = (value or "").strip()
    if not raw:
       return ArtSpec(DEFAULT_ART_PROVIDER)
@@ -136,48 +128,30 @@ def parse_embed_art_arg(value) -> ArtSpec:
    name = name.strip().lower()
 
    if name not in ART_PROVIDERS:
-      choices = ", ".join(ART_PROVIDERS)
       head = raw.split(":", 1)[0].strip().lower()
       if not sep and ":" in raw and head in ART_PROVIDERS:
-         raise argparse.ArgumentTypeError(
-            f"'{head}:…' is not valid; use {head}=KEY (keys go after '=')"
-         )
-      if not sep and (_PATHLIKE_RX.match(raw) or Path(raw).exists()):
-         raise argparse.ArgumentTypeError(
-            f"{raw!r} looks like a path, not an art provider; put the path before "
-            f"-g (pyly \"<path>\" -g), or name the provider (-g musicbrainz)"
-         )
+         raise ValueError(f"'{head}:...' is not valid; use {head}=KEY (keys go after '=')")
       shown = name.split(":", 1)[0][:40]
-      raise argparse.ArgumentTypeError(f"unknown art provider '{shown}'; choose from {choices}")
-
+      raise ValueError(f"unknown cover source '{shown}'; choose from {', '.join(ART_PROVIDERS)}")
    if name in _UNAVAILABLE:
-      raise argparse.ArgumentTypeError(f"art provider '{name}' is not available: {_UNAVAILABLE[name]}")
+      raise ValueError(f"cover source '{name}' is not available: {_UNAVAILABLE[name]}")
 
    key = key.strip() or None
    if key and name in _NO_KEY:
-      raise argparse.ArgumentTypeError(f"art provider '{name}' takes no key")
+      raise ValueError(f"cover source '{name}' takes no key")
    return ArtSpec(name, key)
 
 
 def resolve_art_key(provider: str, inline: str | None = None) -> str | None:
-   """
-   The key for ``provider``. Sources, first found wins: the inline
-   ``provider=KEY`` value, $PYLY_<PROVIDER>_KEY, ~/.pyly/<provider>-key.
-   """
+   """The key for ``provider``: the inline ``source=KEY`` value, else settings.get_key()."""
    if inline:
       return inline
-   env = os.environ.get(f"PYLY_{provider.upper()}_KEY", "").strip()
-   if env:
-      return env
-   path = Path.home() / ".pyly" / f"{provider}-key"
-   if path.is_file():
-      text = path.read_text(encoding="utf-8", errors="replace").strip()
-      return text or None
-   return None
+   from .settings import get_key
+   return get_key(provider)
 
 
 def describe_art_providers() -> list[tuple[str, str]]:
-   """(name, description) rows for --list-providers."""
+   """(name, description) rows for --list-sources."""
    return [
       ("musicbrainz", "Cover Art Archive, via album.nfo's MBID or a MusicBrainz search. No key. (default)"),
       ("theaudiodb", "TheAudioDB album search. Optional key (public test key otherwise); max 20 requests/min."),
@@ -301,7 +275,7 @@ class AlbumQuery:
 def album_query(audio: Path, layout: str | None = None) -> AlbumQuery:
    """
    Who/what the album is. album.nfo is canonical (and carries the MBIDs);
-   then the embedded tags (already corrected when -Z ran first); then the
+   then the embedded tags (already corrected when --fix-tags ran first); then the
    folder layout.
    """
    album_nfo = find_album_nfo(audio)
@@ -620,10 +594,16 @@ class ArtResolver:
    provider + artist + album, for albums split across folders (CD1/CD2).
    """
 
-   def __init__(self, provider: str, key: str | None, overwrite: bool = False, layout: str | None = None):
+   def __init__(self, provider: str | None, key: str | None, prefer: str = "online", layout: str | None = None):
+      """
+      prefer="local"   folder image only; never downloads (--use-cover).
+      prefer="online"  ask ``provider`` first, fall back to the folder image (--get-cover).
+      """
+      if prefer not in ("local", "online"):
+         raise ValueError(f"prefer must be 'local' or 'online', not {prefer!r}")
       self.provider = provider
       self.key = key
-      self.overwrite = overwrite
+      self.prefer = prefer
       self.layout = layout
       self.ctx = _Ctx()
       self._by_folder: dict[Path, ResolvedArt | None] = {}
@@ -637,8 +617,8 @@ class ArtResolver:
 
    def _resolve_folder(self, audio: Path) -> ResolvedArt | None:
       local = find_local_art(audio.parent)
-      if local and not self.overwrite:
-         return self._finish(local, f"local {local.name}")
+      if self.prefer == "local" or not self.provider:
+         return self._finish(local, f"local {local.name}") if local else None
 
       fetched = self._from_provider(audio)
       if fetched:
@@ -658,8 +638,8 @@ class ArtResolver:
       if self.provider in _KEY_REQUIRED and not self.key:
          self.ctx.warn_once(
             "nokey",
-            f"{self.provider}: no key. Pass -g {self.provider}=KEY, set PYLY_{self.provider.upper()}_KEY, "
-            f"or save it to ~/.pyly/{self.provider}-key; skipping {self.provider}",
+            f"{self.provider}: no key. Pass --get-cover {self.provider}=KEY, add it to [keys] in the settings file, "
+            f"set PYLY_{self.provider.upper()}_KEY, or save it to ~/.pyly/{self.provider}-key; skipping {self.provider}",
          )
          return None
       q = album_query(audio, self.layout)
@@ -718,7 +698,7 @@ def embed_cover(audio: Path, image: Path, mode: str = "backup", dry_run: bool = 
    """
    Embed ``image`` as the front cover with ffmpeg stream copy. Any existing
    attached picture is dropped (only the audio is mapped from the source),
-   which is how --overwrite replaces art. ``mode`` is backup or direct.
+   which is how --replace replaces art. ``mode`` is backup or direct.
    """
    if dry_run:
       return True, "dry run"

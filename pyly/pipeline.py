@@ -107,7 +107,7 @@ def run_pipeline(
    # URL re-download
    redownload: bool = False,
 
-   # never fall back to Whisper (--fetch-only)
+   # never fall back to Whisper (download only: --get-lyrics without --make-lyrics)
    fetch_only: bool = False,
 ) -> dict[str, str]:
    """
@@ -209,7 +209,7 @@ def run_pipeline(
          re_fetched = fetch_by_url(embedded_url, log_fn=_log)
          if re_fetched and re_fetched.synced_lrc_text:
             if not overwrite:
-               _log("REDOWNLOAD: skipped (file exists, --overwrite not set)")
+               _log("REDOWNLOAD: skipped (file exists, --replace not set)")
                return {"status": "skipped", "lrc": str(out_lrc), "reason": "existing .lrc"}
 
             # Build metadata headers from re-fetched data
@@ -247,13 +247,13 @@ def run_pipeline(
       if fetch_only:
          _log("FETCH ONLY: no synced fetched lyrics; skipped (Whisper disabled)")
          print(info(f"FETCH ONLY: no synced fetched LRC; skipped ({out_lrc.name})"))
-         return {"status": "skipped", "lrc": str(out_lrc), "reason": "no synced fetched lyrics (--fetch-only)"}
+         return {"status": "skipped", "lrc": str(out_lrc), "reason": "no synced fetched lyrics (download only: --get-lyrics without --make-lyrics)"}
       _log("FETCH MODE PRIMARY: no synced fetched lyrics; running Whisper pipeline")
       print(info("PRIMARY: no synced fetched LRC; continuing with Whisper pipeline"))
 
    if mode == "primary" and fetched and fetched.synced_lrc_text:
       if out_lrc.exists() and not overwrite:
-         _log("FETCH MODE PRIMARY: synced lyrics available but output exists; skipping write due to --overwrite off")
+         _log("FETCH MODE PRIMARY: synced lyrics available but output exists; skipping write due to --replace off")
          print(info(f"PRIMARY: fetched synced LRC available; skipped write ({out_lrc.name}, exists)"))
          return {"status": "skipped", "lrc": str(out_lrc), "reason": "existing .lrc"}
 
@@ -425,7 +425,7 @@ def run_pipeline(
       if mode == "alternate":
          if fetched and fetched.synced_lrc_text:
             if out_fetched_lrc.exists() and not overwrite:
-               _log("FETCH MODE ALTERNATE: synced lyrics available but sidecar exists; skipping sidecar due to --overwrite off")
+               _log("FETCH MODE ALTERNATE: synced lyrics available but sidecar exists; skipping sidecar due to --replace off")
                print(info(f"ALTERNATE: generated Whisper LRC; skipped {out_fetched_lrc.name} (exists)"))
             else:
                alt_headers = build_lrc_metadata_headers(
