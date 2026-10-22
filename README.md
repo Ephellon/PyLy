@@ -152,7 +152,7 @@ Online sources are tried in order until one finds lyrics. The default source is 
 - `genius`: Genius.com, scraped from the song page. Plain (un-synced) lyrics, usually complete and uncensored. Requires `--allow-scraping`.
 - `musixmatch`: Musixmatch, via the backend its own apps use. Large catalog of synced lyrics; falls back to plain text when a song has none. Requires `--allow-scraping` **and** a Musixmatch login key (see [Musixmatch key](#musixmatch-key)).
 
-**Custom search templates:** Add `:query` after the sources to set a custom search (e.g. `musicbrainz:{Artist Name} {Track Title}`). Tokens are filled from tags first, then inferred from path.
+**Custom search templates:** Add `:query` after the sources to set a custom search (e.g. `"musicbrainz:{Artist Name} {Track Title}"`; keep the quotes, since the query has spaces). Tokens are filled from tags first, then inferred from path.
 
 **Example — download lyrics from MusicBrainz and Musixmatch (trying MusicBrainz first):**
 
@@ -163,7 +163,7 @@ pyly "R:\Local\Queen\A Night at the Opera" --get-lyrics musicbrainz,musixmatch -
 **Example — use a custom search for Musixmatch:**
 
 ```
-pyly "R:\Local\Queen\A Night at the Opera\11 Bohemian Rhapsody.mp3" --get-lyrics musixmatch:{Artist Name} {Track Title} --allow-scraping
+pyly "R:\Local\Queen\A Night at the Opera\11 Bohemian Rhapsody.mp3" --get-lyrics "musixmatch:{Artist Name} {Track Title}" --allow-scraping
 ```
 
 ---
@@ -181,7 +181,7 @@ PyLy will use Whisper's timing but replace the guessed words with yours wherever
 If you have a lyrics file for every track and they're named the same as the audio file, you can use a wildcard:
 
 ```
-pyly "R:\Local\Queen\A Night at the Opera" --use-lyrics *.txt
+pyly "R:\Local\Queen\A Night at the Opera" --use-lyrics "*.txt"
 ```
 
 For each `.mp3` (or `.flac`, etc.) it finds, PyLy will look for a matching `.txt` with the same name in the same folder.
@@ -341,8 +341,10 @@ A key goes after the **first `=`** — never `:` (that's `--get-lyrics`'s provid
 ```
 pyly "R:\Local\Queen\A Night at the Opera" --get-cover theaudiodb=MyKey
 pyly "R:\Local\Queen\A Night at the Opera" --get-cover spotify=my_client_id:my_client_secret
-pyly "R:\Local\Queen\A Night at the Opera" --get-cover 'theaudiodb=API K3y/wi+h $pecial_chars'
+pyly "R:\Local\Queen\A Night at the Opera" --get-cover "theaudiodb=API K3y/wi+h $pecial_chars"
 ```
+
+Quote a key that has spaces. In PowerShell, use single quotes instead (`'theaudiodb=API K3y/wi+h $pecial_chars'`) so `$` isn't read as a variable.
 
 PyLy looks for a key in this order (first found wins):
 
