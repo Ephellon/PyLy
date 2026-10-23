@@ -63,6 +63,9 @@ python -m unittest discover -s tests -t .
   - `--use-lyrics FILE` (-u), `--keep-both` (-k), `--trust-lyrics` (-t), `--drop-extras` (-x): each turns on `--make-lyrics`.
   - `--refresh-lyrics` (-y): re-download from `[PyLy:<url>]` header; saves unless `--preview`.
   - `--upgrade-lyrics`: Whisper-made `.lrc` only; replace when synced found; never Whisper.
+  - Whisper hears no words -> marker `.lrc` (`[00:00.00] (Instrumental)` + `[pyly_no_vocals:true]`), status OK, so nightly runs don't redo it.
+  - Titles: ` - feat. X` / `(feat. X)` stripped before searching (`strip_featuring`).
+  - `--get-info`: MBID 404 -> "stale MusicBrainz id" error + search link; never guesses a release.
   - `lyricradar`, `genius`, `musixmatch` need `--allow-scraping` (`--apsss`); `musixmatch` also needs `[keys] musixmatch`.
 - Tags/cover:
   - `--get-info` (-e): fill `album.nfo` from MusicBrainz; `--replace` overwrites; never creates one.

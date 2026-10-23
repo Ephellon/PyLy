@@ -131,6 +131,8 @@ def run_lyrics(opts: RunOptions) -> int:
             ok_count += 1
             eta.add(dt)
             out_name = Path(result.get("lrc", "")).name
+            if result.get("reason"):
+               out_name += f", {result['reason']}"
             live.commit(ok(f"OK ({out_name})  [{format_duration(dt)}]"))
 
       except Exception as e:

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import sys
 import shutil
+import urllib.parse
 from pathlib import Path
 
 from pyly.options import RunOptions
@@ -43,7 +44,7 @@ from pyly.cover_art import (
    has_embedded_art,
    embed_cover,
 )
-from pyly.lyrics_fetch import fetch_mb_release, resolve_release_from_group
+from pyly.lyrics_fetch import MBNotFoundError, fetch_mb_release, resolve_release_from_group
 from pyly.console_ui import banner, ok, err, warn, info
 
 
@@ -114,7 +115,22 @@ def run_get_info(opts: RunOptions) -> int:
             print(err(f"{label}  (could not resolve a release from the release-group id)"))
             continue
 
-         release = fetch_mb_release(release_id)
+         try:
+            release = fetch_mb_release(release_id, raise_not_found=True)
+         except MBNotFoundError:
+            # The id in album.nfo no longer exists on MusicBrainz (the release was
+            # deleted upstream). PyLy won't guess a replacement, since a wrong
+            # release would write a wrong track list; point at a search instead.
+            fail += 1
+            folder = nfo_path.parent
+            search = urllib.parse.urlencode({
+               "query": f"{folder.parent.name} {folder.name}", "type": "release",
+            })
+            print(err(
+               f"{label}  (stale MusicBrainz id in album.nfo: {release_id} no longer exists; "
+               f"fix it by hand: https://musicbrainz.org/search?{search})"
+            ))
+            continue
          if not release:
             fail += 1
             print(err(f"{label}  (MusicBrainz lookup failed)"))

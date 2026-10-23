@@ -152,6 +152,8 @@ When you run PyLy on `11 Bohemian Rhapsody.mp3`, you'll find these new files in 
 
 The `.srt` files are just intermediate steps. The only file you actually need is the `.lrc`. You can delete the others, or have PyLy do it for you with `--clean-up`.
 
+**Songs with no words.** If Whisper hears no words at all (an instrumental, for example), PyLy still writes a `.lrc` with a single `(Instrumental)` line and a `[pyly_no_vocals:true]` header tag. That way the song counts as done and isn't transcribed again on the next run. `--upgrade-lyrics` still checks the online sources for it later.
+
 **Supported audio formats:** `.mp3` `.flac` `.wav` `.m4a` `.aac` `.ogg` `.opus` `.alac` `.wma` `.aiff`
 
 ---

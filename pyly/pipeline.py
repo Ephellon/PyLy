@@ -52,6 +52,24 @@ def _apply_lines_back_to_blocks(blocks: list[SrtBlock], new_lines: list[str]) ->
    return out
 
 
+# What a track with no words gets in its .lrc: one timed line players can show,
+# plus a header tag so PyLy (and people) can tell it apart from real lyrics.
+NO_VOCALS_LINE = "[00:00.00] (Instrumental)"
+NO_VOCALS_HEADER = "[pyly_no_vocals:true]"
+
+
+def _clean_up(clean: bool, *paths: Path) -> None:
+   """Delete the temporary .srt files when --clean-up is on; ignore any that can't be removed."""
+   if not clean:
+      return
+   for p in paths:
+      try:
+         if p.exists():
+            p.unlink()
+      except Exception:
+         pass
+
+
 def _resolve_base_lyrics(base_arg: Path | None, audio_path: Path) -> Path | None:
    """
    Resolve base lyrics path per audio file.
@@ -300,7 +318,21 @@ def run_pipeline(
       # ---- Read red SRT blocks ----
       blocks = read_srt(Path(red_path))
       if not blocks:
-         raise RuntimeError("No subtitle blocks found after reduction.")
+         # Whisper heard no words: an instrumental, or vocals too buried to make out.
+         # Write a marker .lrc anyway, so the track counts as done and a nightly run
+         # doesn't spend minutes re-transcribing it every time. --upgrade-lyrics still
+         # picks it up later (no [PyLy:<url>] line), in case a source gains lyrics.
+         headers = build_lrc_metadata_headers(
+            fetched=fetched,
+            audio_path=audio_path,
+            include_standard_tags=True,
+         ) if lrc_header else []
+         if lrc_header:
+            headers.append(NO_VOCALS_HEADER)
+         write_lrc(out_lrc, [NO_VOCALS_LINE], overwrite=overwrite, headers=headers or None)
+         _log("WHISPER: no words found after reduction; wrote no-vocals marker .lrc")
+         _clean_up(clean, out_srt, out_red)
+         return {"status": "ok", "lrc": str(out_lrc), "reason": "no vocals found"}
 
       # ---- Blocks -> LRC lines ----
       lrc_lines = srt_blocks_to_lrc_lines(blocks)
@@ -442,13 +474,7 @@ def run_pipeline(
             print(info("ALTERNATE: no synced fetched LRC; generated Whisper LRC only"))
 
       # ---- Cleanup ----
-      if clean:
-         for p in [out_srt, out_red]:
-            try:
-               if p.exists():
-                  p.unlink()
-            except Exception:
-               pass
+      _clean_up(clean, out_srt, out_red)
 
       return {"status": "ok", "lrc": str(out_lrc)}
 

@@ -9,7 +9,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
@@ -25,6 +25,20 @@ DEFAULT_TEMPLATE = "{Artist Name} {Track Title}"
 # path guess) rather than by the freetext query alone.
 _STRUCTURED_PROVIDERS = ("musicbrainz", "musixmatch")
 _LRC_TS_RX = re.compile(r"^\s*\[?\d{1,2}:\d{2}(?:\.\d+)?\]?\s*")
+
+# A featured-artist credit inside a song title: "(feat. X)", "[ft. X]", or a
+# trailing " - feat. X" / " featuring X".
+_FEAT_RX = re.compile(
+   r"\s*[(\[]\s*(?:feat\.?|ft\.|featuring)\s[^)\]]*[)\]]"
+   r"|\s*(?:[-–—]\s*)?\b(?:feat\.?|ft\.|featuring)\s.*$",
+   re.IGNORECASE,
+)
+
+
+def strip_featuring(title: str) -> str:
+   """Remove a featured-artist credit from a song title ("Song - feat. X" -> "Song")."""
+   bare = _FEAT_RX.sub("", title).strip(" -–—")
+   return bare or title
 
 # MusicBrainz requires a meaningful User-Agent:
 # https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting
@@ -233,6 +247,14 @@ def _fetch_from_provider(
             album=config.album or guess.album or None,
             title=config.title or guess.title or None,
          )
+
+   # "Song - feat. Guest" or "Song (feat. Guest)": sources list the guest as an
+   # artist, not in the song title, so search with the bare title.
+   if config.title:
+      bare_title = strip_featuring(config.title)
+      if bare_title != config.title:
+         query = query.replace(config.title, bare_title)
+         config = replace(config, title=bare_title)
 
    if not query:
       _log_info("FETCH: skipped (empty query)", log_fn=log_fn)
@@ -608,13 +630,26 @@ def _mb_join_credit(credit) -> str:
    return "".join(parts).strip()
 
 
-def fetch_mb_release(release_mbid: str, log_fn=None) -> MBRelease | None:
-   """Fetch a MusicBrainz release (with recordings + credits + labels)."""
+class MBNotFoundError(LookupError):
+   """MusicBrainz has no release with this id (deleted upstream, or a typo)."""
+
+
+def fetch_mb_release(release_mbid: str, log_fn=None, raise_not_found: bool = False) -> MBRelease | None:
+   """
+   Fetch a MusicBrainz release (with recordings + credits + labels).
+   Returns None on failure; with raise_not_found, a 404 raises MBNotFoundError
+   instead, so the caller can tell a stale id apart from a network problem.
+   """
    inc = "recordings+artist-credits+labels+release-groups"
    params = urllib.parse.urlencode({"inc": inc, "fmt": "json"})
    url = f"https://musicbrainz.org/ws/2/release/{release_mbid}?{params}"
    try:
       data = _mb_get(url)
+   except urllib.error.HTTPError as exc:
+      if exc.code == 404 and raise_not_found:
+         raise MBNotFoundError(release_mbid) from exc
+      _log_warn(f"MB RELEASE: lookup failed ({release_mbid}): {exc}", log_fn=log_fn)
+      return None
    except Exception as exc:
       _log_warn(f"MB RELEASE: lookup failed ({release_mbid}): {exc}", log_fn=log_fn)
       return None
