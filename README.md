@@ -174,7 +174,7 @@ A **flag** is a special option you add to a command, starting with `--` or `-`, 
 Online sources are tried in order until one finds lyrics. The default source is `musicbrainz`.
 
 - `lrclib`: A free, open database of synced lyrics. Fast and simple.
-- `musicbrainz`: Uses MusicBrainz (a music metadata database) to look up the canonical recording first, then fetches from lrclib using that cleaner metadata. Slower (about 2–3 seconds per track on the first pass), but more accurate for messy or unusual filenames.
+- `musicbrainz`: Uses MusicBrainz (a music metadata database) to look up the canonical recording first, then fetches from `lrclib` using that cleaner metadata. Slower (about 2–3 seconds per track on the first pass), but more accurate for messy or unusual filenames.
 - `lyricradar`: Aggregates several sources and returns synced (timestamped) lyrics as well as plain text. Requires `--allow-scraping`.
 - `genius`: Genius.com, scraped from the song page. Plain (un-synced) lyrics, usually complete and uncensored. Requires `--allow-scraping`.
 - `musixmatch`: Musixmatch, via the backend its own apps use. Large catalog of synced lyrics; falls back to plain text when a song has none. Requires `--allow-scraping` **and** a Musixmatch login key (see [Musixmatch key](#musixmatch-key)).
@@ -401,7 +401,7 @@ PyLy looks for a key in this order (first found wins):
 | `PYLY_<PROVIDER>_KEY` environment variable | `PYLY_THEAUDIODB_KEY`, `PYLY_DISCOGS_KEY`, `PYLY_SPOTIFY_KEY` (`client_id:client_secret`), `PYLY_YOUTUBE_KEY` |
 | `~/.pyly/<provider>-key` | a file holding just the key, e.g. `~/.pyly/discogs-key` |
 
-**Quoting keys in your shell.** In **PowerShell** and **bash**, `$` inside *double* quotes is expanded as a variable — `"theaudiodb=API K3y/wi+h $pecial_chars"` would lose `$pecial_chars`. Use **single** quotes there: `--get-cover 'theaudiodb=API K3y/wi+h $pecial_chars'`. In **cmd.exe**, double quotes are fine (`--get-cover "theaudiodb=API K3y/wi+h $pecial_chars"`), but `%` expands there, so a key containing `%` is safer in the env var or key file.
+**Quoting keys in your shell.** In **PowerShell** and **bash**, `$` inside *double* quotes is expanded as a variable — `"theaudiodb=API K3y/wi+h $pecial_chars"` would lose `$pecial_chars`. Use **single** quotes there: `--get-cover 'theaudiodb=API K3y/wi+h $pecial_chars'`. In **Command Prompt** (`cmd.exe`), double quotes are fine (`--get-cover "theaudiodb=API K3y/wi+h $pecial_chars"`), but `%` expands there, so a key containing `%` is safer in the env var or key file.
 
 A key typed on the command line also ends up in your shell history (the list of past commands) and is visible in process lists while PyLy runs. For a real key, prefer the `[keys]` section of the settings file (see [Settings file and profiles](#settings-file-and-profiles)), the environment variable, or `~/.pyly/<provider>-key`. PyLy never writes keys into `.lrc` files, caches or logs, and never prints them in errors.
 
@@ -564,50 +564,50 @@ Flags are grouped by purpose. The **Letter** column shows the short form (if any
 
 | Flag | Letter | What it does | Default |
 |---|---|---|---|
-| `--make-lyrics` | `-m` | create .lrc lyrics: download synced lyrics first, then run Whisper for any track still without them | (when no action given) |
-| `--get-lyrics` | `-g` | download lyrics only (never Whisper), trying each source in order | (empty string = default sources) |
+| `--make-lyrics` | `-m` | create `.lrc` lyrics: download synced lyrics first, then run Whisper for any track still without them | (when no action given) |
+| `--get-lyrics` | `-g` | download lyrics only (never Whisper), trying each source in order | `musicbrainz` |
 | `--use-lyrics` | `-u` | use a local lyrics text file (or pattern) as the reference Whisper is matched against | (none) |
-| `--refresh-lyrics` | `-y` | download lyrics again from the address saved in each .lrc and save | false |
-| `--upgrade-lyrics` | (none) | replace Whisper-made .lrc files wherever a source has synced lyrics | false |
-| `--keep-both` | `-k` | save downloaded lyrics as `<name>.fetched.lrc` and still run Whisper for the .lrc | false |
-| `--trust-lyrics` | `-t` | treat the reference lyrics as correct when patching Whisper's text | false |
-| `--drop-extras` | `-x` | drop Whisper lines that match nothing in the reference lyrics | false |
+| `--refresh-lyrics` | `-y` | download lyrics again from the address saved in each `.lrc` and save | `false` |
+| `--upgrade-lyrics` | (none) | replace Whisper-made `.lrc` files wherever a source has synced lyrics | `false` |
+| `--keep-both` | `-k` | save downloaded lyrics as `<name>.fetched.lrc` and still run Whisper for the `.lrc` | `false` |
+| `--trust-lyrics` | `-t` | treat the reference lyrics as correct when patching Whisper's text | `false` |
+| `--drop-extras` | `-x` | drop Whisper lines that match nothing in the reference lyrics | `false` |
 
 ### Tags, album.nfo, and cover
 
 | Flag | Letter | What it does | Default |
 |---|---|---|---|
-| `--get-info` | `-e` | fill missing album.nfo details from MusicBrainz (with --replace, overwrite details already there) | false |
-| `--fix-tags` | `-f` | rewrite audio tags that don't match album.nfo | false |
-| `--check-tags` | `-c` | report tags that don't match album.nfo; writes nothing. MODE: strict (default) or loose. | strict |
-| `--get-cover` | `-v` | download cover art and embed it, falling back to the folder's own image when the source finds nothing. Default source: musicbrainz. | (none) |
-| `--use-cover` | `-s` | embed the folder's album/poster/default/cover/folder image. Never downloads. | false |
+| `--get-info` | `-e` | fill missing `album.nfo` details from MusicBrainz (with `--replace`, overwrite details already there) | `false` |
+| `--fix-tags` | `-f` | rewrite audio tags that don't match `album.nfo` | `false` |
+| `--check-tags` | `-c` | report tags that don't match `album.nfo`; writes nothing. Mode: `strict` (default) or `loose`. | `strict` |
+| `--get-cover` | `-v` | download cover art and embed it, falling back to the folder's own image when the source finds nothing. Default source: `musicbrainz`. | (none) |
+| `--use-cover` | `-s` | embed the folder's `album`, `poster`, `default`, `cover` or `folder` image. Never downloads. | `false` |
 
 ### Run control
 
 | Flag | Letter | What it does | Default |
 |---|---|---|---|
-| `--include-subfolders` | `-i` | process every folder under the path, not just the path itself | false |
-| `--replace` | `-r` | replace outputs that already exist: .lrc files, album.nfo details, embedded art | false |
-| `--preview` | `-p` | show what would happen and change nothing | false |
-| `--clean-up` | `-n` | delete the temporary .srt files Whisper leaves behind | false |
-| `--write-log` | `-w` | save a log file next to each .lrc | false |
-| `--skip-backup` | `-b` | don't keep a .bak copy before rewriting tags or embedding art | false |
-| `--skip-header` | (none) | leave the tag lines out of the .lrc header | false |
-| `--allow-scraping` | (none) | allow sources that read websites instead of a public API (lyricradar, genius, musixmatch) | false |
-| `--list-sources` | (none) | print the lyric and cover sources, then stop | false |
+| `--include-subfolders` | `-i` | process every folder under the path, not just the path itself | `false` |
+| `--replace` | `-r` | replace outputs that already exist: `.lrc` files, `album.nfo` details, embedded art | `false` |
+| `--preview` | `-p` | show what would happen and change nothing | `false` |
+| `--clean-up` | `-n` | delete the temporary `.srt` files Whisper leaves behind | `false` |
+| `--write-log` | `-w` | save a log file (`.pyly.log`) next to each `.lrc` | `false` |
+| `--skip-backup` | `-b` | don't keep a `.bak` copy before rewriting tags or embedding art | `false` |
+| `--skip-header` | (none) | leave the tag lines out of the `.lrc` header | `false` |
+| `--allow-scraping` | (none) | allow sources that read websites instead of a public API (`lyricradar`, `genius`, `musixmatch`) | `false` |
+| `--list-sources` | (none) | print the lyric and cover sources, then stop | `false` |
 
 ### Settings (nouns)
 
 | Flag | Letter | What it does | Default |
 |---|---|---|---|
-| `--profile` | (none) | use a [NAME] section of the settings file (~/.pyly/pyly.ini or $PYLY_CONFIG) | (none) |
-| `--language` | `-l` | language Whisper should expect, e.g. en. Whisper guesses when it's not set. | (none) |
-| `--layout` | `-a` | how folders are arranged: lidarr, plex, flat, or a template such as R:\Local\{Artist Name}\{Album Title}\{track:00} {Track Title}. Default: Artist/Album/Track. | (none) |
-| `--model` | `-o` | Whisper model size. Default: medium. | medium |
-| `--device` | `-d` | where Whisper runs. Whisper decides when it's not set. | (none) |
-| `--whisper-python` | (none) | the Python that has Whisper installed. Default: $PYLY_WHISPER_PYTHON, then the Python running PyLy. | (none) |
-| `--color` | (none) | colored output. Default: auto (on in a terminal). | auto |
+| `--profile` | (none) | use a `[NAME]` section of the settings file (`~/.pyly/pyly.ini`, or the path in `PYLY_CONFIG`) | (none) |
+| `--language` | `-l` | language Whisper should expect, e.g. `en`. Whisper guesses when it's not set. | (none) |
+| `--layout` | `-a` | how folders are arranged: `lidarr`, `plex`, `flat`, or a template such as `R:\Local\{Artist Name}\{Album Title}\{track:00} {Track Title}`. Default: `Artist/Album/Track`. | (none) |
+| `--model` | `-o` | Whisper model size: `tiny`, `base`, `small`, `medium` or `large` (bigger is slower but more accurate). | `medium` |
+| `--device` | `-d` | where Whisper runs: `cuda` (Nvidia graphics card) or `cpu`. Whisper decides when it's not set. | (none) |
+| `--whisper-python` | (none) | the Python that has Whisper installed. Default: the path in `PYLY_WHISPER_PYTHON`, then the Python running PyLy. | (none) |
+| `--color` | (none) | colored output: `auto` (on in a terminal), `on` or `off`. | `auto` |
 
 ### Advanced: fine-tuning the lyrics matching (no letters)
 
@@ -615,11 +615,11 @@ Flags are grouped by purpose. The **Letter** column shows the short form (if any
 
 | Flag | Letter | What it does | Default |
 |---|---|---|---|
-| `--match-score` | (none) | how similar a Whisper line must be to a reference line to be replaced by it | 0.82 |
-| `--match-window` | (none) | how many reference lines ahead to look for a match | 12 |
-| `--merge-limit` | (none) | most Whisper lines that may merge into one reference line | 5 |
-| `--rescue-score` | (none) | overall similarity needed before the rescue pass runs | 0.75 |
-| `--skip-rescue` | (none) | turn off the rescue pass after matching | false |
+| `--match-score` | (none) | how similar a Whisper line must be to a reference line to be replaced by it | `0.82` |
+| `--match-window` | (none) | how many reference lines ahead to look for a match | `12` |
+| `--merge-limit` | (none) | most Whisper lines that may merge into one reference line | `5` |
+| `--rescue-score` | (none) | overall similarity needed before the rescue pass runs | `0.75` |
+| `--skip-rescue` | (none) | turn off the rescue pass after matching | `false` |
 
 ---
 
