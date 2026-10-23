@@ -290,6 +290,8 @@ The second command shows you what *would* change without actually changing anyth
 
 `--fix-tags` (`-f`) only rewrites the fields that are actually wrong, using the same `album.nfo → layout → filename` source order. Add `--skip-backup` (`-b`) if you don't want the `.bak` copies.
 
+`--fix-tags` decides what counts as "wrong" the `loose` way (see [Strict vs loose](#check-tags-read-only) above). If you also add `--check-tags strict` to the same run, it fixes the `strict` way instead, so the check that runs right after it has nothing left to report.
+
 **Example — fix tags without backups:**
 
 ```

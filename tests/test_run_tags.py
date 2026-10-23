@@ -102,6 +102,26 @@ class TestRunFixTags(unittest.TestCase):
       args, kwargs = mock_write_tags.call_args
       self.assertEqual(kwargs.get("mode"), "direct")
 
+   @patch("pyly.run_tags.collect_audio_files")
+   @patch("pyly.run_tags.find_album_nfo", return_value=None)
+   @patch("pyly.run_tags.find_artist_nfo", return_value=None)
+   @patch("pyly.run_tags.read_embedded_tags", return_value={})
+   @patch("pyly.run_tags.expected_metadata", return_value={})
+   @patch("pyly.run_tags.actual_metadata", return_value={})
+   @patch("pyly.run_tags.layout_metadata", return_value={})
+   @patch("pyly.run_tags.compare_metadata", return_value=[])
+   @patch("pyly.run_tags.has_problems", return_value=False)
+   @patch("pyly.run_tags.banner")
+   def test_strictness_follows_check_tags(self, _banner, _has_problems, mock_compare, *_mocks):
+      """--fix-tags compares in the --check-tags mode when given, else loose."""
+      _mocks[-1].return_value = [self.tmp_path / "track.mp3"]  # collect_audio_files
+      for check_tags, expected in ((None, "loose"), ("strict", "strict"), ("loose", "loose")):
+         with self.subTest(check_tags=check_tags):
+            mock_compare.reset_mock()
+            opts = RunOptions(paths=[str(self.tmp_path)], fix_tags=True, check_tags=check_tags)
+            run_fix_tags(opts)
+            self.assertEqual(mock_compare.call_args.kwargs.get("mode"), expected)
+
 
 class TestRunCheckTags(unittest.TestCase):
    """Tests for run_check_tags."""

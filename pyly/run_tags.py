@@ -173,7 +173,8 @@ def run_fix_tags(opts: RunOptions) -> int:
    """
    Rewrite audio tags that don't match album.nfo.
    Write mode comes from opts.write_mode ("backup" or "direct").
-   Comparison strictness is "loose" for fixing.
+   Comparison strictness follows --check-tags when it's also given (so a strict
+   check after the fix finds nothing left to report); otherwise "loose".
    Returns 0 on success, 1 if any file failed or mismatches remain, 2 on bad input.
    """
    try:
@@ -187,7 +188,7 @@ def run_fix_tags(opts: RunOptions) -> int:
       return 1
 
    write_mode = opts.write_mode  # "backup" or "direct"
-   strictness = "loose"
+   strictness = opts.check_tags or "loose"
    layout = opts.layout
    dry_run = opts.preview
 

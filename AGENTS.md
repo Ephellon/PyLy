@@ -69,7 +69,7 @@ python -m unittest discover -s tests -t .
   - `lyricradar`, `genius`, `musixmatch` need `--allow-scraping` (`--apsss`); `musixmatch` also needs `[keys] musixmatch`.
 - Tags/cover:
   - `--get-info` (-e): fill `album.nfo` from MusicBrainz; `--replace` overwrites; never creates one.
-  - `--fix-tags` (-f), `--check-tags [strict|loose]` (-c, default strict).
+  - `--fix-tags` (-f), `--check-tags [strict|loose]` (-c, default strict). Fix compares loose, or in the `--check-tags` mode when both given.
   - `--use-cover` (-s): folder image only. `--get-cover [SOURCE[=KEY]]` (-v): download (default `musicbrainz`), fall back to folder image.
   - Embedded art skipped unless `--replace`. Audio writes keep `.bak` unless `--skip-backup` (-b).
 - Run control: `--include-subfolders` (-i), `--replace` (-r), `--preview` (-p), `--clean-up` (-n), `--write-log` (-w), `--skip-header`, `--list-sources`.
