@@ -123,6 +123,20 @@ class TestSearchRelease(unittest.TestCase):
       self.assertEqual(match.release_id, "x")
       self.assertFalse(match.exact)
 
+   def test_artist_id_matches_release_under_another_name(self):
+      # An artist id covers every name the artist released under: the album is
+      # filed under "Kanye West" but the release is credited to "Ye".
+      ye = {"id": "e398f34d", "title": "BULLY", "track-count": 20, "score": 100, "status": "Official",
+            "date": "2026-06-19", "artist-credit": [{"name": "Ye", "artist": {"id": "artist-1", "name": "Ye"}}]}
+      other = dict(ye, id="other", **{"artist-credit": [{"name": "Ye", "artist": {"id": "artist-2"}}]})
+      with patch.object(lyrics_fetch, "_mb_get", return_value={"releases": [other, ye]}) as mock_get:
+         match = lyrics_fetch.search_mb_release("Kanye West", "BULLY", 20, artist_id="artist-1")
+      self.assertEqual(match.release_id, "e398f34d")
+      self.assertIn("arid%3Aartist-1", mock_get.call_args.args[0])
+      # Without the id, the name "Kanye West" doesn't match "Ye".
+      with patch.object(lyrics_fetch, "_mb_get", return_value={"releases": [ye]}):
+         self.assertIsNone(lyrics_fetch.search_mb_release("Kanye West", "BULLY", 20))
+
    def test_search_error_returns_none(self):
       with patch.object(lyrics_fetch, "_mb_get", side_effect=OSError("offline")):
          self.assertIsNone(lyrics_fetch.search_mb_release("Queen", "A Night at the Opera"))

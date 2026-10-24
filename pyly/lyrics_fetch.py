@@ -651,16 +651,21 @@ class MBReleaseMatch:
 
 
 def search_mb_release(artist: str, album: str, track_count: int | None = None,
-                      log_fn=None) -> MBReleaseMatch | None:
+                      log_fn=None, artist_id: str = "") -> MBReleaseMatch | None:
    """
    Search MusicBrainz for the release that best fits an artist, album title and
    (optionally) number of tracks. Returns None when nothing fits well enough.
+   With artist_id (the artist's MusicBrainz id), search and match by that id
+   instead of the name, so releases under another name (Ye vs Kanye West) count.
    Used only to suggest a replacement for a stale id; the caller never writes it.
    """
-   if not (artist and album):
+   if not (album and (artist or artist_id)):
       return None
    clean = lambda s: re.sub(r'["\\]', " ", s)
-   lucene = f'release:"{clean(album)}" AND artist:"{clean(artist)}"'
+   if artist_id:
+      lucene = f'release:"{clean(album)}" AND arid:{clean(artist_id)}'
+   else:
+      lucene = f'release:"{clean(album)}" AND artist:"{clean(artist)}"'
    url = "https://musicbrainz.org/ws/2/release?" + urllib.parse.urlencode(
       {"query": lucene, "fmt": "json", "limit": "15"})
    try:
@@ -676,7 +681,13 @@ def search_mb_release(artist: str, album: str, track_count: int | None = None,
       credit = _mb_join_credit(rel.get("artist-credit"))
       title_sim = _mxm_sim(album, rel.get("title"))
       # A different album or a different band is never a candidate.
-      if title_sim < 0.8 or not _mxm_artist_ok(artist, credit):
+      if artist_id:
+         credit_ids = {(c.get("artist") or {}).get("id") for c in rel.get("artist-credit") or []
+                       if isinstance(c, dict)}
+         same_artist = artist_id in credit_ids
+      else:
+         same_artist = _mxm_artist_ok(artist, credit)
+      if title_sim < 0.8 or not same_artist:
          continue
       count = rel.get("track-count")
       count = count if isinstance(count, int) else None
@@ -1590,8 +1601,10 @@ def _mxm_sim(a: str | None, b: str | None) -> float:
 def _mxm_artist_ok(wanted: str, got: str | None) -> bool:
    # Containment covers "Queen" vs "Queen feat. X"; whole-string similarity
    # alone is too forgiving (an album name scores 0.63 against a band name).
+   # Containment is by whole words, so "Ye" doesn't match inside "Kanye West".
    w, g = _mxm_norm(wanted), _mxm_norm(got)
-   return bool(w and g) and (w in g or g in w or _mxm_sim(w, g) >= 0.8)
+   contains = lambda a, b: re.search(rf"\b{re.escape(a)}\b", b) is not None
+   return bool(w and g) and (contains(w, g) or contains(g, w) or _mxm_sim(w, g) >= 0.8)
 
 
 def _mxm_variant_penalty(wanted: str, got: str | None) -> float:

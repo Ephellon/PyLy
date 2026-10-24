@@ -301,6 +301,20 @@ def read_nfo_mbids(nfo_path: Path) -> tuple[str, str]:
    return release, group
 
 
+def read_nfo_artist_mbid(album_nfo_path: Path) -> str:
+   """
+   The artist's MusicBrainz id for an album: from album.nfo, else from the
+   artist.nfo Lidarr writes in the artist folder above it. '' if neither has one.
+   The id covers every name an artist has released under (Kanye West / Ye).
+   """
+   for path in (album_nfo_path, album_nfo_path.parent.parent / "artist.nfo"):
+      text = _read_text(path) if path.is_file() else None
+      mbid = _nfo_first("musicbrainzartistid", text or "")
+      if mbid:
+         return mbid
+   return ""
+
+
 def album_nfo_missing_fields(nfo_path: Path) -> list[str]:
    """
    Which substantive fields an album.nfo still lacks, judged locally (no

@@ -72,7 +72,7 @@ class TestRunGetInfo(unittest.TestCase):
 
          self.assertEqual(result, 1)
          # Track 11 exists, so the album has at least 11 tracks even with only 2 files here.
-         mock_search.assert_called_once_with("Queen", "A Night at the Opera", 11)
+         mock_search.assert_called_once_with("Queen", "A Night at the Opera", 11, artist_id="")
          self.assertIn("stale-id", out.getvalue())
          self.assertIn("https://musicbrainz.org/release/new-id", out.getvalue())
          self.assertEqual(nfo.read_text(encoding="utf-8"), nfo_text)

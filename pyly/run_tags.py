@@ -32,6 +32,7 @@ from pyly.file_metadata import (
    album_nfo_missing_fields,
    enrich_album_nfo,
    parse_album_nfo,
+   read_nfo_artist_mbid,
    has_problems,
    write_tags,
    _read_text,
@@ -85,7 +86,7 @@ def _suggest_release(nfo_path: Path) -> str:
    album = (nfo.album_title if nfo else "") or folder.name
    track_count = _album_track_count(folder, nfo)
 
-   match = search_mb_release(artist, album, track_count)
+   match = search_mb_release(artist, album, track_count, artist_id=read_nfo_artist_mbid(nfo_path))
    if not match:
       search = urllib.parse.urlencode({"query": f"{artist} {album}", "type": "release"})
       return info(f"   no close match on MusicBrainz; search by hand: https://musicbrainz.org/search?{search}")
