@@ -327,6 +327,8 @@ It is **non-destructive by default**: anything already in the file (your `<ratin
 
 To avoid hammering MusicBrainz, PyLy checks the file **locally first** and only looks a release up when a substantive field — the album artist, the year, or the track list — is actually missing. An `album.nfo` that already has all three is skipped without any network request, so re-running `--get-info` over a library only contacts MusicBrainz for the albums that still need it. (Incidental extras like label or barcode don't trigger a lookup on their own; pass `--replace` to force a full refresh.)
 
+**When the id in `album.nfo` no longer exists.** MusicBrainz sometimes deletes or replaces a release, so the id in an older `album.nfo` can stop working. PyLy then reports a stale id and searches MusicBrainz for the album by its artist, title and number of tracks. It prints the best match and its link, but never writes it into the file, because a wrong guess would give the album a wrong track list. Check the link, and if it's right, paste the id into `<musicbrainzalbumid>` yourself. The album counts as a failure until you do.
+
 > Needs internet. PyLy respects MusicBrainz's ~1 request/second rate limit, so a large library takes a moment per album.
 
 ---
