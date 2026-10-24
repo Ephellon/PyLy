@@ -13,6 +13,7 @@ Each function takes a finished RunOptions object and returns an exit code.
 from __future__ import annotations
 
 import sys
+import re
 import shutil
 import urllib.parse
 from pathlib import Path
@@ -30,6 +31,7 @@ from pyly.file_metadata import (
    read_nfo_mbids,
    album_nfo_missing_fields,
    enrich_album_nfo,
+   parse_album_nfo,
    has_problems,
    write_tags,
    _read_text,
@@ -44,13 +46,60 @@ from pyly.cover_art import (
    has_embedded_art,
    embed_cover,
 )
-from pyly.lyrics_fetch import MBNotFoundError, fetch_mb_release, resolve_release_from_group
+from pyly.lyrics_fetch import (
+   MBNotFoundError,
+   fetch_mb_release,
+   resolve_release_from_group,
+   search_mb_release,
+)
 from pyly.console_ui import banner, ok, err, warn, info
 
 
 # ---------------------------------------------------------------------------
 # run_get_info: enrich album.nfo from MusicBrainz
 # ---------------------------------------------------------------------------
+
+def _album_track_count(folder: Path, nfo) -> int | None:
+   """
+   How many tracks the album has: the album.nfo track list if it has one, else
+   the larger of the number of audio files and the highest track number in a
+   filename ("12 Song.mp3" means at least 12, even when tracks are missing).
+   """
+   if nfo and nfo.tracks:
+      return len(nfo.tracks)
+   files = collect_audio_files([folder], recursive=False)
+   numbers = [int(m.group(1)) for f in files if (m := re.match(r"(\d{1,3})\D", f.stem))]
+   return max([len(files), *numbers]) or None
+
+
+def _suggest_release(nfo_path: Path) -> str:
+   """
+   For an album.nfo with a stale MusicBrainz id: search MusicBrainz by artist,
+   album and track count, and return a line naming the best match for a person
+   to check and paste in. Nothing is written.
+   """
+   folder = nfo_path.parent
+   nfo = parse_album_nfo(nfo_path)
+   # album.nfo first, then the folder names (Artist\Album).
+   artist = (nfo.album_artist if nfo else "") or folder.parent.name
+   album = (nfo.album_title if nfo else "") or folder.name
+   track_count = _album_track_count(folder, nfo)
+
+   match = search_mb_release(artist, album, track_count)
+   if not match:
+      search = urllib.parse.urlencode({"query": f"{artist} {album}", "type": "release"})
+      return info(f"   no close match on MusicBrainz; search by hand: https://musicbrainz.org/search?{search}")
+
+   tracks = f"{match.track_count} tracks" if match.track_count is not None else "track count unknown"
+   kind = "exact match" if match.exact else "closest match"
+   details = ", ".join(x for x in (tracks, match.date) if x)
+   others = (f"\n   {match.others} other edition(s) fit just as well (different country or format); "
+             "they usually share the same track list") if match.others else ""
+   return info(
+      f"   {kind}: {match.title!r} by {match.artist} ({details}) {match.url}{others}\n"
+      f"   not applied; to use it, put {match.release_id} in <musicbrainzalbumid> in {nfo_path.name}"
+   )
+
 
 def run_get_info(opts: RunOptions) -> int:
    """
@@ -119,17 +168,12 @@ def run_get_info(opts: RunOptions) -> int:
             release = fetch_mb_release(release_id, raise_not_found=True)
          except MBNotFoundError:
             # The id in album.nfo no longer exists on MusicBrainz (the release was
-            # deleted upstream). PyLy won't guess a replacement, since a wrong
-            # release would write a wrong track list; point at a search instead.
+            # deleted upstream). Search for the album and suggest the best match,
+            # but never write it: runs are often unattended, and a wrong release
+            # would write a wrong track list. Still a FAIL until the id is fixed.
             fail += 1
-            folder = nfo_path.parent
-            search = urllib.parse.urlencode({
-               "query": f"{folder.parent.name} {folder.name}", "type": "release",
-            })
-            print(err(
-               f"{label}  (stale MusicBrainz id in album.nfo: {release_id} no longer exists; "
-               f"fix it by hand: https://musicbrainz.org/search?{search})"
-            ))
+            print(err(f"{label}  (stale MusicBrainz id in album.nfo: {release_id} no longer exists)"))
+            print(_suggest_release(nfo_path))
             continue
          if not release:
             fail += 1

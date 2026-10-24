@@ -46,6 +46,38 @@ class TestRunGetInfo(unittest.TestCase):
          self.assertEqual(result, 0)
          # Should print the "nothing to update" message
 
+   def test_stale_id_suggests_match_but_never_writes(self):
+      """A 404 on the album.nfo id prints the best search match and leaves the file alone."""
+      import io
+      from contextlib import redirect_stdout
+      from pyly.lyrics_fetch import MBNotFoundError, MBReleaseMatch
+
+      with TemporaryDirectory() as tmp:
+         album = Path(tmp) / "Queen" / "A Night at the Opera"
+         album.mkdir(parents=True)
+         for name in ("03 I'm in Love With My Car.mp3", "11 Bohemian Rhapsody.mp3"):
+            (album / name).write_text("")
+         nfo = album / "album.nfo"
+         nfo_text = ("<album><title>A Night at the Opera</title><artist>Queen</artist>"
+                     "<musicbrainzalbumid>stale-id</musicbrainzalbumid></album>")
+         nfo.write_text(nfo_text, encoding="utf-8")
+
+         match = MBReleaseMatch(release_id="new-id", title="A Night at the Opera", artist="Queen",
+                                track_count=2, date="1975-11-21", exact=True)
+         out = io.StringIO()
+         with patch("pyly.run_tags.fetch_mb_release", side_effect=MBNotFoundError("stale-id")), \
+              patch("pyly.run_tags.search_mb_release", return_value=match) as mock_search, \
+              redirect_stdout(out):
+            result = run_get_info(RunOptions(paths=[str(album)], get_info=True, replace=True))
+
+         self.assertEqual(result, 1)
+         # Track 11 exists, so the album has at least 11 tracks even with only 2 files here.
+         mock_search.assert_called_once_with("Queen", "A Night at the Opera", 11)
+         self.assertIn("stale-id", out.getvalue())
+         self.assertIn("https://musicbrainz.org/release/new-id", out.getvalue())
+         self.assertEqual(nfo.read_text(encoding="utf-8"), nfo_text)
+         self.assertFalse((album / "album.nfo.bak").exists())
+
 
 class TestRunFixTags(unittest.TestCase):
    """Tests for run_fix_tags."""

@@ -634,6 +634,78 @@ class MBNotFoundError(LookupError):
    """MusicBrainz has no release with this id (deleted upstream, or a typo)."""
 
 
+@dataclass(frozen=True)
+class MBReleaseMatch:
+   """A release found by searching MusicBrainz, offered as a replacement for a stale id."""
+   release_id: str
+   title: str
+   artist: str
+   track_count: int | None
+   date: str
+   exact: bool  # same title, same artist and (when known) same number of tracks
+   others: int = 0  # other editions that fit just as well (countries, formats)
+
+   @property
+   def url(self) -> str:
+      return f"https://musicbrainz.org/release/{self.release_id}"
+
+
+def search_mb_release(artist: str, album: str, track_count: int | None = None,
+                      log_fn=None) -> MBReleaseMatch | None:
+   """
+   Search MusicBrainz for the release that best fits an artist, album title and
+   (optionally) number of tracks. Returns None when nothing fits well enough.
+   Used only to suggest a replacement for a stale id; the caller never writes it.
+   """
+   if not (artist and album):
+      return None
+   clean = lambda s: re.sub(r'["\\]', " ", s)
+   lucene = f'release:"{clean(album)}" AND artist:"{clean(artist)}"'
+   url = "https://musicbrainz.org/ws/2/release?" + urllib.parse.urlencode(
+      {"query": lucene, "fmt": "json", "limit": "15"})
+   try:
+      data = _mb_get(url)
+   except Exception as exc:
+      _log_warn(f"MB SEARCH: failed for {artist!r} - {album!r}: {exc}", log_fn=log_fn)
+      return None
+
+   best, best_score, scores = None, 0.0, []
+   for rel in (data or {}).get("releases") or []:
+      if not isinstance(rel, dict) or not rel.get("id"):
+         continue
+      credit = _mb_join_credit(rel.get("artist-credit"))
+      title_sim = _mxm_sim(album, rel.get("title"))
+      # A different album or a different band is never a candidate.
+      if title_sim < 0.8 or not _mxm_artist_ok(artist, credit):
+         continue
+      count = rel.get("track-count")
+      count = count if isinstance(count, int) else None
+      # A release with fewer tracks than the album has can't be it (e.g. the single).
+      if track_count is not None and count is not None and count < track_count:
+         continue
+      same_count = track_count is not None and count == track_count
+      status = str(rel.get("status") or "").lower()
+      official = status == "official"
+      # Title fit counts most, then a matching track count, then an official
+      # release over a withdrawn or bootleg one, then MusicBrainz's own score.
+      score = (2 * title_sim + (1.0 if same_count else 0.0)
+               + (0.5 if official else -1.0 if status in ("withdrawn", "bootleg") else 0.0)
+               + (rel.get("score") or 0) / 100
+               + (0.05 if rel.get("date") else 0.0))
+      scores.append(score)
+      if score > best_score:
+         exact = title_sim == 1.0 and official and (track_count is None or same_count)
+         best = MBReleaseMatch(
+            release_id=rel["id"], title=str(rel.get("title") or ""), artist=credit,
+            track_count=count, date=str(rel.get("date") or ""), exact=exact,
+         )
+         best_score = score
+   if best:
+      others = sum(1 for s in scores if abs(s - best_score) < 0.01) - 1
+      best = replace(best, others=others)
+   return best
+
+
 def fetch_mb_release(release_mbid: str, log_fn=None, raise_not_found: bool = False) -> MBRelease | None:
    """
    Fetch a MusicBrainz release (with recordings + credits + labels).
