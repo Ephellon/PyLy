@@ -142,5 +142,53 @@ class TestSearchRelease(unittest.TestCase):
          self.assertIsNone(lyrics_fetch.search_mb_release("Queen", "A Night at the Opera"))
 
 
+def _option(rid, country, titles, status="Official", date="2019-12-15"):
+   return lyrics_fetch.MBReleaseOption(release_id=rid, country=country, country_count=1,
+                                       date=date, status=status, track_titles=tuple(titles))
+
+
+class TestEditions(unittest.TestCase):
+   """Choosing between an album's editions: worldwide first, unless another fits the files better."""
+
+   def test_lists_every_release_country(self):
+      events = [{"area": {"iso-3166-1-codes": [c]}} for c in ("AF", "AL", "US", "GB")]
+      data = {"releases": [
+         {"id": "us", "release-events": events, "status": "Official", "date": "2019-12-15",
+          "media": [{"tracks": [{"title": "Reborn"}] * 12}]},
+         {"id": "xw", "release-events": [{"area": {"iso-3166-1-codes": ["XW"]}}], "status": "Official",
+          "date": "2023-01-25", "media": [{"tracks": [{"title": "Reborn"}] * 11}]},
+      ]}
+      with patch.object(lyrics_fetch, "_mb_get", return_value=data):
+         us, xw = lyrics_fetch.list_group_releases("group")
+      self.assertEqual((us.country, us.country_count, us.track_count), ("US", 4, 12))
+      self.assertEqual((xw.country, xw.country_count, xw.track_count), ("XW", 1, 11))
+      self.assertTrue(xw.worldwide)
+
+   def test_worldwide_wins_a_tie(self):
+      us = _option("us", "US", ["Reborn", "Mouzone Brothas"])
+      xw = _option("xw", "XW", ["Reborn", "Mouzone Brothas"], date="2023-01-25")
+      ranked = lyrics_fetch.rank_releases([us, xw], {1: "Reborn"}, current_id="us")
+      self.assertEqual([o.release_id for o in ranked], ["xw", "us"])
+
+   def test_edition_matching_local_files_beats_worldwide(self):
+      # "06 My Potna Dem" is track 6 on one edition and track 7 on the other.
+      six = ["a", "b", "c", "d", "e", "My Potna Dem", "g"]
+      seven = ["a", "b", "c", "d", "e", "f", "My Potna Dem"]
+      ranked = lyrics_fetch.rank_releases([_option("xw", "XW", seven), _option("us", "US", six)],
+                                          {6: "My Potna Dem"})
+      self.assertEqual(ranked[0].release_id, "us")
+
+   def test_too_short_edition_goes_last(self):
+      ranked = lyrics_fetch.rank_releases([_option("xw", "XW", ["a"] * 5), _option("us", "US", ["a"] * 12)],
+                                          {11: "k"})
+      self.assertEqual(ranked[0].release_id, "us")
+
+   def test_year_is_first_release_not_this_edition(self):
+      release = lyrics_fetch._parse_mb_release({
+         "id": "xw", "date": "2023-01-25", "release-group": {"id": "g", "first-release-date": "2019-12-15"},
+      })
+      self.assertEqual(release.year, "2019")
+
+
 if __name__ == "__main__":
    unittest.main()

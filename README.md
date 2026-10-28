@@ -327,6 +327,16 @@ It is **non-destructive by default**: anything already in the file (your `<ratin
 
 To avoid hammering MusicBrainz, PyLy checks the file **locally first** and only looks a release up when a substantive field — the album artist, the year, or the track list — is actually missing. An `album.nfo` that already has all three is skipped without any network request, so re-running `--get-info` over a library only contacts MusicBrainz for the albums that still need it. (Incidental extras like label or barcode don't trigger a lookup on their own; pass `--replace` to force a full refresh.)
 
+**Choosing the right edition.** Most albums come out in several editions (releases): different countries, formats, or extra tracks. PyLy looks at all of them and picks, in this order:
+
+1. the edition whose track numbers match your files (for example, your `06 My Song.mp3` is track 6 on that edition);
+2. the worldwide edition (`XW` on MusicBrainz);
+3. an official release;
+4. the edition `album.nfo` already names;
+5. the earliest one.
+
+The other editions are saved in `album.nfo` as `<relatedrelease>` entries (id, country, date, status and number of tracks), best first, so you can switch to one later by copying its id into `<musicbrainzalbumid>`. PyLy only replaces the id `album.nfo` already has when you add `--replace`; without it, PyLy tells you when another edition fits better.
+
 **When the id in `album.nfo` no longer exists.** MusicBrainz sometimes deletes or replaces a release, so the id in an older `album.nfo` can stop working. PyLy then reports a stale id and searches MusicBrainz for the album by its artist, title and number of tracks. It prints the best match and its link, but never writes it into the file, because a wrong guess would give the album a wrong track list. Check the link, and if it's right, paste the id into `<musicbrainzalbumid>` yourself. The album counts as a failure until you do.
 
 > Needs internet. PyLy respects MusicBrainz's ~1 request/second rate limit, so a large library takes a moment per album.

@@ -255,7 +255,7 @@ def parse_album_nfo(nfo_path: Path) -> AlbumNfo | None:
       if title or pos_raw:
          tracks.append(NfoTrack(position=_safe_int(pos_raw), title=title))
 
-   album_level = re.sub(r"<track\b[^>]*>.*?</track>", "", text, flags=re.IGNORECASE | re.DOTALL)
+   album_level = _album_level(text)
 
    album_title = _nfo_first("title", album_level)
    # The \b after "artist" means <artistdesc> (a biography) is never matched,
@@ -296,8 +296,9 @@ def parse_artist_nfo(nfo_path: Path) -> ArtistNfo | None:
 def read_nfo_mbids(nfo_path: Path) -> tuple[str, str]:
    """Return (release_mbid, release_group_mbid) from an album.nfo, '' if absent."""
    text = _read_text(nfo_path) or ""
-   release = _nfo_first("musicbrainzalbumid", text)
-   group = _nfo_first("musicbrainzreleasegroupid", text)
+   album_level = _album_level(text)
+   release = _nfo_first("musicbrainzalbumid", album_level)
+   group = _nfo_first("musicbrainzreleasegroupid", album_level)
    return release, group
 
 
@@ -326,7 +327,7 @@ def album_nfo_missing_fields(nfo_path: Path) -> list[str]:
    An empty list means the file is complete enough to skip the lookup.
    """
    text = _read_text(nfo_path) or ""
-   album_level = re.sub(r"<track\b[^>]*>.*?</track>", "", text, flags=re.IGNORECASE | re.DOTALL)
+   album_level = _album_level(text)
 
    missing: list[str] = []
    if not (_nfo_first("albumartist", album_level) or _nfo_first("artist", album_level)):
@@ -338,7 +339,8 @@ def album_nfo_missing_fields(nfo_path: Path) -> list[str]:
    return missing
 
 
-def enrich_album_nfo(nfo_path: Path, release, overwrite: bool = False) -> tuple[list[str], str]:
+def enrich_album_nfo(nfo_path: Path, release, overwrite: bool = False,
+                     related: list | None = None) -> tuple[list[str], str]:
    """
    Merge a MusicBrainz release into an album.nfo's text.
 
@@ -348,8 +350,14 @@ def enrich_album_nfo(nfo_path: Path, release, overwrite: bool = False) -> tuple[
    Non-destructive by default: only missing top-level fields are inserted and
    the <track> list is only added when the file has none. With ``overwrite``,
    existing scalar fields are replaced and the track list is regenerated.
+
+   ``related`` lists the album's other editions on MusicBrainz (other
+   countries, formats, track counts). They're written as <relatedrelease>
+   blocks so a better-fitting edition is easy to find and switch to later;
+   added when the file has none, rewritten with ``overwrite``.
    """
    text = _read_text(nfo_path) or ""
+   original = text
    changes: list[str] = []
    indent = _detect_indent(text)
 
@@ -363,7 +371,7 @@ def enrich_album_nfo(nfo_path: Path, release, overwrite: bool = False) -> tuple[
       ("musicbrainzreleasegroupid", release.release_group_id),
    ]
 
-   album_level = re.sub(r"<track\b[^>]*>.*?</track>", "", text, flags=re.IGNORECASE | re.DOTALL)
+   album_level = _album_level(text)
    inserts: list[str] = []
 
    for tag, value in scalars:
@@ -379,20 +387,41 @@ def enrich_album_nfo(nfo_path: Path, release, overwrite: bool = False) -> tuple[
          changes.append(f"~{tag}")
 
    existing_tracks = _nfo_blocks("track", text)
-   if release.tracks and (overwrite or not existing_tracks):
-      if existing_tracks and overwrite:
-         text = re.sub(r"[ \t]*<track\b[^>]*>.*?</track>\s*\n?", "", text, flags=re.IGNORECASE | re.DOTALL)
+   tracks_rebuilt = bool(release.tracks) and (overwrite or not existing_tracks)
+   if tracks_rebuilt:
+      if existing_tracks:
+         text = _drop_blocks("track", text)
          changes.append(f"~{len(release.tracks)} tracks")
       else:
          changes.append(f"+{len(release.tracks)} tracks")
       for tr in release.tracks:
          inserts.append(_track_xml(tr, indent))
 
-   if not changes:
-      return [], text
+   # <relatedrelease> blocks always sit after the track list, so when the tracks
+   # are rebuilt they're moved down with them, even when they stay the same.
+   existing_related = re.findall(r"[ \t]*<relatedrelease\b[^>]*>.*?</relatedrelease>", text,
+                                 flags=re.IGNORECASE | re.DOTALL)
+   existing_ids = [_nfo_first("musicbrainzalbumid", b) for b in existing_related]
+   wanted_ids = [r.release_id for r in related] if related is not None else existing_ids
+   replace_related = wanted_ids != existing_ids and (overwrite or not existing_ids)
+   if replace_related or (tracks_rebuilt and existing_related):
+      text = _drop_blocks("relatedrelease", text)
+      if replace_related:
+         changes.append(f"{'~' if existing_ids else '+'}{len(related)} related releases")
+         inserts.extend(_related_xml(rel, indent) for rel in related)
+      else:
+         inserts.extend(existing_related)
 
    new_text = _insert_before_album_close(text, inserts) if inserts else text
+   # Rebuilt sections that come out identical are not a change.
+   if not changes or new_text == original:
+      return [], original
    return changes, new_text
+
+
+def _drop_blocks(tag: str, text: str) -> str:
+   """Remove every <tag>...</tag> block and its line, leaving the next line's indent alone."""
+   return re.sub(rf"[ \t]*<{tag}\b[^>]*>.*?</{tag}>[ \t]*\r?\n?", "", text, flags=re.IGNORECASE | re.DOTALL)
 
 
 def _track_xml(track, indent: str) -> str:
@@ -409,6 +438,18 @@ def _track_xml(track, indent: str) -> str:
    if track.recording_id:
       lines.append(f"{pad}<musicbrainztrackid>{track.recording_id}</musicbrainztrackid>")
    lines.append(f"{indent}</track>")
+   return "\n".join(lines)
+
+
+def _related_xml(rel, indent: str) -> str:
+   """One <relatedrelease> block: another edition's id, where and when it came out, and its size."""
+   pad = indent + indent
+   lines = [f"{indent}<relatedrelease>", f"{pad}<musicbrainzalbumid>{rel.release_id}</musicbrainzalbumid>"]
+   for tag, value in (("country", rel.country), ("countries", rel.country_count if rel.country_count > 1 else None),
+                      ("date", rel.date), ("status", rel.status), ("tracks", rel.track_count)):
+      if value:
+         lines.append(f"{pad}<{tag}>{_xml_escape(str(value))}</{tag}>")
+   lines.append(f"{indent}</relatedrelease>")
    return "\n".join(lines)
 
 
@@ -451,6 +492,15 @@ def _read_text(path: Path) -> str | None:
       return path.read_text(encoding="utf-8", errors="replace")
    except Exception:
       return None
+
+
+def _album_level(text: str) -> str:
+   """
+   The album.nfo text without its <track> and <relatedrelease> blocks, so
+   album-level lookups (title, artist, year, ids) never pick up a value that
+   belongs to one track or to another edition of the album.
+   """
+   return re.sub(r"<(track|relatedrelease)\b[^>]*>.*?</\1>", "", text, flags=re.IGNORECASE | re.DOTALL)
 
 
 def _nfo_first(tag: str, text: str) -> str:

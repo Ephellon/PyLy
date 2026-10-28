@@ -702,7 +702,8 @@ def search_mb_release(artist: str, album: str, track_count: int | None = None,
       score = (2 * title_sim + (1.0 if same_count else 0.0)
                + (0.5 if official else -1.0 if status in ("withdrawn", "bootleg") else 0.0)
                + (rel.get("score") or 0) / 100
-               + (0.05 if rel.get("date") else 0.0))
+               + (0.05 if rel.get("date") else 0.0)
+               + (0.1 if "XW" in _release_countries(rel) else 0.0))
       scores.append(score)
       if score > best_score:
          exact = title_sim == 1.0 and official and (track_count is None or same_count)
@@ -741,26 +742,98 @@ def fetch_mb_release(release_mbid: str, log_fn=None, raise_not_found: bool = Fal
    return _parse_mb_release(data)
 
 
-def resolve_release_from_group(rg_mbid: str, log_fn=None) -> str | None:
-   """Pick a release id from a release-group MBID (first listed release)."""
-   params = urllib.parse.urlencode({"inc": "releases", "fmt": "json"})
-   url = f"https://musicbrainz.org/ws/2/release-group/{rg_mbid}?{params}"
+@dataclass(frozen=True)
+class MBReleaseOption:
+   """One edition (release) of an album on MusicBrainz, as listed for its release group."""
+   release_id: str
+   country: str          # "XW" when released worldwide, else "US" when released there, else the first country
+   country_count: int    # how many countries it was released in
+   date: str
+   status: str
+   track_titles: tuple[str, ...]
+
+   @property
+   def track_count(self) -> int:
+      return len(self.track_titles)
+
+   @property
+   def worldwide(self) -> bool:
+      return self.country == "XW"
+
+
+def _release_countries(rel: dict) -> list[str]:
+   """
+   Every country code a release came out in. A release can come out in many
+   countries; MusicBrainz's single "country" field shows only one of them, so
+   read every release event ("XW" means worldwide).
+   """
+   codes: list[str] = []
+   for ev in rel.get("release-events") or []:
+      for code in ((ev or {}).get("area") or {}).get("iso-3166-1-codes") or []:
+         if code not in codes:
+            codes.append(code)
+   if not codes and rel.get("country"):
+      codes = [rel["country"]]
+   return codes
+
+
+def list_group_releases(rg_mbid: str, log_fn=None) -> list[MBReleaseOption]:
+   """Every release in a release group, with its countries and track titles (one request)."""
+   params = urllib.parse.urlencode({"release-group": rg_mbid, "inc": "recordings+media",
+                                    "fmt": "json", "limit": "100"})
    try:
-      data = _mb_get(url)
+      data = _mb_get(f"https://musicbrainz.org/ws/2/release?{params}")
    except Exception as exc:
-      _log_warn(f"MB GROUP: lookup failed ({rg_mbid}): {exc}", log_fn=log_fn)
-      return None
-   releases = data.get("releases") if isinstance(data, dict) else None
-   if isinstance(releases, list):
-      for rel in releases:
-         if isinstance(rel, dict) and rel.get("id"):
-            return rel["id"]
-   return None
+      _log_warn(f"MB GROUP: listing releases failed ({rg_mbid}): {exc}", log_fn=log_fn)
+      return []
+   options: list[MBReleaseOption] = []
+   for rel in (data or {}).get("releases") or []:
+      if not isinstance(rel, dict) or not rel.get("id"):
+         continue
+      codes = _release_countries(rel)
+      country = "XW" if "XW" in codes else "US" if "US" in codes else (codes[0] if codes else "")
+      titles = tuple(str(t.get("title") or "") for m in rel.get("media") or [] for t in m.get("tracks") or [])
+      options.append(MBReleaseOption(
+         release_id=rel["id"], country=country, country_count=len(codes),
+         date=str(rel.get("date") or ""), status=str(rel.get("status") or ""), track_titles=titles,
+      ))
+   return options
+
+
+def rank_releases(options: list[MBReleaseOption], local_tracks: dict[int, str],
+                  current_id: str = "") -> list[MBReleaseOption]:
+   """
+   Order an album's editions best first:
+     1. fits the local files (each "NN Title" file matches that release's track NN),
+        and has at least as many tracks as the highest local track number;
+     2. the worldwide (XW) release;
+     3. official releases;
+     4. the edition album.nfo already names;
+     5. earliest date.
+   So the worldwide release wins unless another edition fits the files better.
+   """
+   highest = max(local_tracks, default=0)
+
+   def fit(opt: MBReleaseOption) -> int:
+      return sum(1 for n, title in local_tracks.items()
+                 if n <= opt.track_count and _mxm_sim(title, opt.track_titles[n - 1]) >= 0.8)
+
+   return sorted(options, key=lambda o: (
+      o.track_count < highest,
+      -fit(o),
+      not o.worldwide,
+      o.status.lower() != "official",
+      o.release_id != current_id,
+      o.date or "9999",
+   ))
 
 
 def _parse_mb_release(data: dict) -> MBRelease:
    date = str(data.get("date") or "")
-   year_match = re.search(r"\b(19|20)\d{2}\b", date)
+   # The album's year is when it first came out, not when this edition did
+   # (a 2023 worldwide reissue of a 2019 album is still a 2019 album).
+   first = str((data.get("release-group") or {}).get("first-release-date") or "")
+   year_match = re.search(r"\b(19|20)\d{2}\b", first) or re.search(r"\b(19|20)\d{2}\b", date)
 
    label = ""
    for li in data.get("label-info") or []:

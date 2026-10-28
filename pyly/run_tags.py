@@ -50,7 +50,8 @@ from pyly.cover_art import (
 from pyly.lyrics_fetch import (
    MBNotFoundError,
    fetch_mb_release,
-   resolve_release_from_group,
+   list_group_releases,
+   rank_releases,
    search_mb_release,
 )
 from pyly.console_ui import banner, ok, err, warn, info
@@ -71,6 +72,16 @@ def _album_track_count(folder: Path, nfo) -> int | None:
    files = collect_audio_files([folder], recursive=False)
    numbers = [int(m.group(1)) for f in files if (m := re.match(r"(\d{1,3})\D", f.stem))]
    return max([len(files), *numbers]) or None
+
+
+def _local_tracks(folder: Path) -> dict[int, str]:
+   """Track number -> title from the audio filenames ("06 My Song.mp3" -> {6: "My Song"})."""
+   tracks: dict[int, str] = {}
+   for f in collect_audio_files([folder], recursive=False):
+      m = re.match(r"(\d{1,3})[\s._-]+(.+)", f.stem)
+      if m:
+         tracks[int(m.group(1))] = m.group(2)
+   return tracks
 
 
 def _suggest_release(nfo_path: Path) -> str:
@@ -158,30 +169,48 @@ def run_get_info(opts: RunOptions) -> int:
          if missing:
             print(info(f"{label}  (missing: {', '.join(missing)}) — looking up MusicBrainz"))
 
-         if not release_id:
-            release_id = resolve_release_from_group(group_id) or ""
-         if not release_id:
-            fail += 1
-            print(err(f"{label}  (could not resolve a release from the release-group id)"))
-            continue
+         current_id = release_id
+         release = None
+         if release_id:
+            try:
+               release = fetch_mb_release(release_id, raise_not_found=True)
+            except MBNotFoundError:
+               # The id in album.nfo no longer exists on MusicBrainz (the release was
+               # deleted upstream). Search for the album and suggest the best match,
+               # but never write it: runs are often unattended, and a wrong release
+               # would write a wrong track list. Still a FAIL until the id is fixed.
+               fail += 1
+               print(err(f"{label}  (stale MusicBrainz id in album.nfo: {release_id} no longer exists)"))
+               print(_suggest_release(nfo_path))
+               continue
+            if not release:
+               fail += 1
+               print(err(f"{label}  (MusicBrainz lookup failed)"))
+               continue
+            group_id = release.release_group_id or group_id
 
-         try:
-            release = fetch_mb_release(release_id, raise_not_found=True)
-         except MBNotFoundError:
-            # The id in album.nfo no longer exists on MusicBrainz (the release was
-            # deleted upstream). Search for the album and suggest the best match,
-            # but never write it: runs are often unattended, and a wrong release
-            # would write a wrong track list. Still a FAIL until the id is fixed.
-            fail += 1
-            print(err(f"{label}  (stale MusicBrainz id in album.nfo: {release_id} no longer exists)"))
-            print(_suggest_release(nfo_path))
-            continue
+         # An album usually has several editions (countries, formats, bonus tracks).
+         # Prefer the worldwide (XW) one, unless another fits the local files better.
+         options = list_group_releases(group_id) if group_id else []
+         ranked = rank_releases(options, _local_tracks(nfo_path.parent), current_id)
+         best = ranked[0] if ranked else None
+         if best and best.release_id != current_id:
+            if overwrite or not current_id:
+               if current_id:
+                  print(info(f"{label}  switching to the {best.country} edition {best.release_id} "
+                             f"({best.track_count} tracks; was {current_id})"))
+               release = fetch_mb_release(best.release_id)
+            else:
+               print(info(f"{label}  the {best.country} edition {best.release_id} ({best.track_count} tracks) "
+                          "fits better; add --replace to switch to it"))
          if not release:
             fail += 1
-            print(err(f"{label}  (MusicBrainz lookup failed)"))
+            print(err(f"{label}  (could not find a release for the release-group id)"))
             continue
 
-         changes, new_text = enrich_album_nfo(nfo_path, release, overwrite=overwrite)
+         # The other editions are kept as <relatedrelease> entries, best first.
+         related = [o for o in ranked if o.release_id != release.release_id] if options else None
+         changes, new_text = enrich_album_nfo(nfo_path, release, overwrite=overwrite, related=related)
          if not changes:
             skipped += 1
             print(ok(f"{label}  (already complete)"))

@@ -69,6 +69,7 @@ python -m unittest discover -s tests -t .
   - `lyricradar`, `genius`, `musixmatch` need `--allow-scraping` (`--apsss`); `musixmatch` also needs `[keys] musixmatch`.
 - Tags/cover:
   - `--get-info` (-e): fill `album.nfo` from MusicBrainz; `--replace` overwrites; never creates one.
+  - Edition pick (`rank_releases`): local "NN Title" fit > XW (read all `release-events`, not `country`) > official > current id > earliest. Others -> `<relatedrelease>` blocks after tracks. Id switches only with `--replace`. Year = release group's first-release-date. Album-level nfo reads skip `<track>`/`<relatedrelease>` (`_album_level`).
   - `--fix-tags` (-f), `--check-tags [strict|loose]` (-c, default strict). Fix compares loose, or in the `--check-tags` mode when both given.
   - `--use-cover` (-s): folder image only. `--get-cover [SOURCE[=KEY]]` (-v): download (default `musicbrainz`), fall back to folder image.
   - Embedded art skipped unless `--replace`. Audio writes keep `.bak` unless `--skip-backup` (-b).
