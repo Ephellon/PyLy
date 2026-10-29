@@ -92,6 +92,12 @@ class TestDescribe(unittest.TestCase):
       self.assertIn(".lrc", describe({"code": "DURATION", "library": 355, "service": 365, "delta": 10},
                                      has_downloaded_lyrics=True))
 
+   def test_tracklist_names_missing_tracks(self):
+      line = describe({"code": "TRACKLIST", "missing": ["01 Death on Two Legs", "02 Lazing on a Sunday Afternoon",
+                                                        "04 You're My Best Friend", "05 '39"]})
+      self.assertIn("missing 4: 01 Death on Two Legs", line)
+      self.assertIn("+1 more", line)
+
    def test_unknown_code_still_shown(self):
       self.assertTrue(describe({"code": "NEW_THING", "x": 1}).startswith("NEW_THING:"))
 

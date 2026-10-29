@@ -137,6 +137,11 @@ def describe(mismatch: dict, has_downloaded_lyrics: bool = False) -> str:
    if code == "TRACKLIST":
       parts = [f"{name} {len(mismatch[name])}" for name in ("missing", "extra", "duplicates", "moved")
                if mismatch.get(name)]
+      # FAFO names missing tracks "NN Title", so show the first few; the rest stay counted.
+      missing = [str(m) for m in mismatch.get("missing") or []]
+      if missing:
+         shown = ", ".join(missing[:3]) + (f", +{len(missing) - 3} more" if len(missing) > 3 else "")
+         parts[0] = f"missing {len(missing)}: {shown}"
       return f"TRACKLIST: differs from MusicBrainz ({', '.join(parts) or 'details in feed'})"
    if code in ("ISRC", "EXPLICIT"):
       return f"{code}: tag {mismatch.get('library')!r}, service {mismatch.get('service')!r}"
