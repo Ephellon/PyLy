@@ -152,6 +152,9 @@ FLAGS: tuple[Flag, ...] = (
              "Python running PyLy."),
    Flag("color", None, "setting", group="settings", value=("auto", "on", "off"), default="auto",
         metavar="WHEN", help="colored output. Default: auto (on in a terminal)."),
+   Flag("mismatch-file", None, "setting", group="settings", value="text", metavar="FILE",
+        help="FAFO's mismatches.jsonl; --check-tags shows its flags beside tag problems. "
+             "Read only, never acted on."),
 
    # -- Fine-tuning for matching reference lyrics (rarely used, no letters) ---
    Flag("match-score", None, "setting", group="tuning", value="float", default=0.82, metavar="0-1",
@@ -228,6 +231,7 @@ class RunOptions:
    device: str | None = None
    whisper_python: str | None = None
    color: str = "auto"
+   mismatch_file: str | None = None
 
    # tuning
    match_score: float = 0.82

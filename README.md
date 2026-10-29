@@ -266,6 +266,14 @@ pyly "R:\Local\Queen\A Night at the Opera" --check-tags loose
 
 `loose` is handy when your `.nfo` files carry MusicBrainz medium/edition suffixes you don't keep in your tags.
 
+**Notes from FAFO.** [FAFO](https://github.com/Ephellon/FfAFO) is a separate program that compares each song with a streaming service and MusicBrainz and lists the ones that look wrong: the wrong recording, a different length, a withdrawn release, and so on. Point `--mismatch-file` at its list and `--check-tags` prints those notes too, marked `[FAFO]`:
+
+```
+pyly "R:\Local\Queen\A Night at the Opera" --check-tags --mismatch-file "R:\FAFO\mismatches.jsonl"
+```
+
+The notes are only shown. They don't change your files and don't make the check fail. A note is skipped when the song changed after FAFO looked at it.
+
 ### Advanced: how tags are compared
 
 > **Advanced.** You can skip this part. It explains how PyLy compares tags; you don't need it to use `--check-tags` or `--fix-tags`.
@@ -624,6 +632,7 @@ Flags are grouped by purpose. The **Letter** column shows the short form (if any
 | `--device` | `-d` | where Whisper runs: `cuda` (Nvidia graphics card) or `cpu`. Whisper decides when it's not set. | (none) |
 | `--whisper-python` | (none) | the Python that has Whisper installed. Default: the path in `PYLY_WHISPER_PYTHON`, then the Python running PyLy. | (none) |
 | `--color` | (none) | colored output: `auto` (on in a terminal), `on` or `off`. | `auto` |
+| `--mismatch-file` | (none) | FAFO's list of songs that look wrong (`mismatches.jsonl`). `--check-tags` shows its notes beside the tag problems. Read only: PyLy never changes anything because of it. | (none) |
 
 ### Advanced: fine-tuning the lyrics matching (no letters)
 

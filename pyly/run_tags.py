@@ -54,6 +54,7 @@ from pyly.lyrics_fetch import (
    rank_releases,
    search_mb_release,
 )
+from pyly.mismatch_feed import MismatchFeed, album_flags, load_mismatch_feed, track_flags
 from pyly.console_ui import banner, ok, err, warn, info
 
 
@@ -351,12 +352,32 @@ def run_check_tags(opts: RunOptions) -> int:
    layout = opts.layout
 
    banner(f"PyLy --check-tags [{strictness}] — {len(inputs)} file(s)")
+   feed = _load_feed(opts)
 
    clean_count = 0
    problem_count = 0
    fail_count = 0
+   flagged_count = 0
+   flagged_folders: set[Path] = set()
 
    for audio in inputs:
+      # FAFO flags are shown but never counted as tag problems: they don't
+      # change the exit code, so a nightly run isn't marked failed by them.
+      if feed is not None:
+         if audio.parent not in flagged_folders:
+            flagged_folders.add(audio.parent)
+            lines = album_flags(feed, audio.parent)
+            if lines:
+               print(warn(f"{audio.parent.name}  [FAFO album]"))
+               for line in lines:
+                  print(info(f"  {line}"))
+         lines = track_flags(feed, audio)
+         if lines:
+            flagged_count += 1
+            print(warn(f"{audio.name}  [FAFO]"))
+            for line in lines:
+               print(info(f"  {line}"))
+
       try:
          album_nfo = find_album_nfo(audio)
          artist_nfo = find_artist_nfo(audio)
@@ -389,10 +410,27 @@ def run_check_tags(opts: RunOptions) -> int:
          fail_count += 1
          print(err(f"{audio.name}: {e}"))
 
-   banner(f"{clean_count} - OK / {problem_count} - MISMATCH / {fail_count} - FAIL")
+   flagged_note = f" / {flagged_count} - FAFO" if feed is not None else ""
+   banner(f"{clean_count} - OK / {problem_count} - MISMATCH / {fail_count} - FAIL{flagged_note}")
 
    # Non-zero exit when any mismatch or failure
    return 0 if (problem_count == 0 and fail_count == 0) else 1
+
+
+def _load_feed(opts: RunOptions) -> MismatchFeed | None:
+   """
+   Read --mismatch-file when it's set. A missing or unreadable file gives one
+   warning and the check carries on without FAFO flags.
+   """
+   if not opts.mismatch_file:
+      return None
+   try:
+      feed = load_mismatch_feed(opts.mismatch_file)
+   except OSError as e:
+      print(warn(f"FAFO mismatch file not read ({opts.mismatch_file}): {e.strerror or e}"))
+      return None
+   print(info(f"FAFO: {len(feed)} flagged item(s) in {opts.mismatch_file}"))
+   return feed
 
 
 # ---------------------------------------------------------------------------
