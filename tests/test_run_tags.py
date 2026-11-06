@@ -68,11 +68,12 @@ class TestRunGetInfo(unittest.TestCase):
          with patch("pyly.run_tags.fetch_mb_release", side_effect=MBNotFoundError("stale-id")), \
               patch("pyly.run_tags.search_mb_release", return_value=match) as mock_search, \
               redirect_stdout(out):
-            result = run_get_info(RunOptions(paths=[str(album)], get_info=True, replace=True))
+            result = run_get_info(RunOptions(paths=[str(album)], get_info=True, replace=True,
+                                             country_code="gb"))
 
          self.assertEqual(result, 1)
          # Track 11 exists, so the album has at least 11 tracks even with only 2 files here.
-         mock_search.assert_called_once_with("Queen", "A Night at the Opera", 11, artist_id="")
+         mock_search.assert_called_once_with("Queen", "A Night at the Opera", 11, artist_id="", home="GB")
          self.assertIn("stale-id", out.getvalue())
          self.assertIn("https://musicbrainz.org/release/new-id", out.getvalue())
          self.assertEqual(nfo.read_text(encoding="utf-8"), nfo_text)

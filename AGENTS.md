@@ -70,13 +70,13 @@ python -m unittest discover -s tests -t .
   - `lyricradar`, `genius`, `musixmatch` need `--allow-scraping` (`--apsss`); `musixmatch` also needs `[keys] musixmatch`.
 - Tags/cover:
   - `--get-info` (-e): fill `album.nfo` from MusicBrainz; `--replace` overwrites; never creates one.
-  - Edition pick (`rank_releases`): local "NN Title" fit > XW (read all `release-events`, not `country`) > official > not one-country non-US (e.g. JP) > current id > most countries > US > earliest. Credit in non-Latin script with Latin artist name -> artist name (`_mb_join_credit`). Others -> `<relatedrelease>` blocks after tracks. Id switches only with `--replace`. Year = release group's first-release-date. Album-level nfo reads skip `<track>`/`<relatedrelease>` (`_album_level`).
+  - Edition pick (`rank_releases`): local "NN Title" fit > home country (`--country-code`, default `settings.detect_country()`, else US) > XW (read all `release-events`, not `country`) > official > not one-country elsewhere (e.g. JP) > current id > most countries > earliest. Credit in non-Latin script with Latin artist name -> artist name (`_mb_join_credit`). Others -> `<relatedrelease>` blocks after tracks. Id switches only with `--replace`. Year = release group's first-release-date. Album-level nfo reads skip `<track>`/`<relatedrelease>` (`_album_level`).
   - `--fix-tags` (-f), `--check-tags [strict|loose]` (-c, default strict). Fix compares loose, or in the `--check-tags` mode when both given.
   - `--mismatch-file FILE`: FAFO feed (JSON Lines; `file` or `folder`, `checked`, optional `size`/`mtime`, `mismatches[{code}]`). `--check-tags` prints `[FAFO]` lines; album flags once per folder. Never writes, never changes exit code. Last record per path wins; record skipped when file changed after check. FAFO data never writes tags/nfo/lrc (ruling, share `fafo-pyly-flagging`).
   - `--use-cover` (-s): folder image only. `--get-cover [SOURCE[=KEY]]` (-v): download (default `musicbrainz`), fall back to folder image.
   - Embedded art skipped unless `--replace`. Audio writes keep `.bak` unless `--skip-backup` (-b).
 - Run control: `--include-subfolders` (-i), `--replace` (-r), `--preview` (-p), `--clean-up` (-n), `--write-log` (-w), `--skip-header`, `--list-sources`.
-- Settings: `--profile`, `--language` (-l), `--layout` (-a), `--model` (-o, default `medium`), `--device` (-d), `--whisper-python`, `--color`, `--mismatch-file`. Tuning (no letters): `--match-score`, `--match-window`, `--merge-limit`, `--rescue-score`, `--skip-rescue`.
+- Settings: `--profile`, `--language` (-l), `--layout` (-a), `--model` (-o, default `medium`), `--device` (-d), `--whisper-python`, `--color`, `--mismatch-file`, `--country-code`. Tuning (no letters): `--match-score`, `--match-window`, `--merge-limit`, `--rescue-score`, `--skip-rescue`.
 - Settings file: priority CLI > `[profile]` > `[defaults]` > built-in. Keys = flag names (`get-lyrics = musicbrainz,musixmatch`). Switches: yes/no/true/false/on/off/1/0. Value-or-switch: `yes` = default value, `no` = off. Key lookup: `[keys]` entry > `PYLY_<SOURCE>_KEY` > `~/.pyly/<source>-key`.
 
 ## Git

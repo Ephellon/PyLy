@@ -167,7 +167,8 @@ class TestEditions(unittest.TestCase):
    def test_worldwide_wins_a_tie(self):
       us = _option("us", "US", ["Reborn", "Mouzone Brothas"])
       xw = _option("xw", "XW", ["Reborn", "Mouzone Brothas"], date="2023-01-25")
-      ranked = lyrics_fetch.rank_releases([us, xw], {1: "Reborn"}, current_id="us")
+      # Home country (DE) has no edition of its own here.
+      ranked = lyrics_fetch.rank_releases([us, xw], {1: "Reborn"}, current_id="us", home="DE")
       self.assertEqual([o.release_id for o in ranked], ["xw", "us"])
 
    def test_edition_matching_local_files_beats_worldwide(self):
@@ -194,6 +195,22 @@ class TestEditions(unittest.TestCase):
       # Even when album.nfo already names the Japanese edition.
       ranked = lyrics_fetch.rank_releases([jp, gb, us], {14: "z"}, current_id="jp")
       self.assertEqual(ranked[0].release_id, "us")
+
+   def test_home_country_edition_wins(self):
+      xw = _option("xw", "XW", ["a"] * 12)
+      gb = lyrics_fetch.MBReleaseOption(release_id="gb", country="GB", country_count=2, date="2019-12-15",
+                                        status="Official", track_titles=("a",) * 12, countries=("GB", "IE"))
+      jp = _option("jp", "JP", ["a"] * 12)
+      self.assertEqual(lyrics_fetch.rank_releases([xw, gb, jp], {1: "a"}, home="GB")[0].release_id, "gb")
+      self.assertEqual(lyrics_fetch.rank_releases([xw, gb, jp], {1: "a"}, home="jp")[0].release_id, "jp")
+      # Home not on offer: worldwide wins as before.
+      self.assertEqual(lyrics_fetch.rank_releases([xw, gb, jp], {1: "a"}, home="DE")[0].release_id, "xw")
+
+   def test_files_fit_beats_home_country(self):
+      home = _option("us", "US", ["a", "b"])
+      other = _option("gb", "GB", ["a", "Mouzone Brothas"])
+      ranked = lyrics_fetch.rank_releases([home, other], {2: "Mouzone Brothas"}, home="US")
+      self.assertEqual(ranked[0].release_id, "gb")
 
    def test_credit_in_other_script_uses_artist_name(self):
       credit = [{"name": "ビリー・アイリッシュ", "joinphrase": " feat. ",

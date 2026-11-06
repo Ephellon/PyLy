@@ -19,6 +19,7 @@ import urllib.parse
 from pathlib import Path
 
 from pyly.options import RunOptions
+from pyly.settings import detect_country
 from pyly.inputs import collect_audio_files
 from pyly.file_metadata import (
    read_embedded_tags,
@@ -85,7 +86,7 @@ def _local_tracks(folder: Path) -> dict[int, str]:
    return tracks
 
 
-def _suggest_release(nfo_path: Path) -> str:
+def _suggest_release(nfo_path: Path, home: str = "") -> str:
    """
    For an album.nfo with a stale MusicBrainz id: search MusicBrainz by artist,
    album and track count, and return a line naming the best match for a person
@@ -98,7 +99,7 @@ def _suggest_release(nfo_path: Path) -> str:
    album = (nfo.album_title if nfo else "") or folder.name
    track_count = _album_track_count(folder, nfo)
 
-   match = search_mb_release(artist, album, track_count, artist_id=read_nfo_artist_mbid(nfo_path))
+   match = search_mb_release(artist, album, track_count, artist_id=read_nfo_artist_mbid(nfo_path), home=home)
    if not match:
       search = urllib.parse.urlencode({"query": f"{artist} {album}", "type": "release"})
       return info(f"   no close match on MusicBrainz; search by hand: https://musicbrainz.org/search?{search}")
@@ -140,12 +141,23 @@ def run_get_info(opts: RunOptions) -> int:
       print(f"[X] {e}", file=sys.stderr)
       return 2
 
+   # The home country picks the edition released there first; when it isn't
+   # given, use this computer's region (and US if even that can't be read).
+   home = (opts.country_code or "").strip().upper()
+   if home and not re.fullmatch(r"[A-Z]{2}", home):
+      print(f"[X] --country-code wants a two-letter country code like US or GB (got {opts.country_code!r}).",
+            file=sys.stderr)
+      return 2
+   home_from = "--country-code" if home else "this computer's region"
+   home = home or detect_country() or "US"
+
    if not nfo_files:
       # Nothing to enrich is not a failure
       print("(i) No album.nfo files found; nothing to update.")
       return 0
 
    banner(f"PyLy --get-info — {len(nfo_files)} album.nfo file(s)")
+   print(info(f"editions released in {home} first (from {home_from})"))
 
    updated = skipped = no_id = fail = 0
    overwrite = opts.replace
@@ -182,7 +194,7 @@ def run_get_info(opts: RunOptions) -> int:
                # would write a wrong track list. Still a FAIL until the id is fixed.
                fail += 1
                print(err(f"{label}  (stale MusicBrainz id in album.nfo: {release_id} no longer exists)"))
-               print(_suggest_release(nfo_path))
+               print(_suggest_release(nfo_path, home))
                continue
             if not release:
                fail += 1
@@ -191,18 +203,19 @@ def run_get_info(opts: RunOptions) -> int:
             group_id = release.release_group_id or group_id
 
          # An album usually has several editions (countries, formats, bonus tracks).
-         # Prefer the worldwide (XW) one, unless another fits the local files better.
+         # Prefer the home-country one, then worldwide (XW), unless another fits the local files better.
          options = list_group_releases(group_id) if group_id else []
-         ranked = rank_releases(options, _local_tracks(nfo_path.parent), current_id)
+         ranked = rank_releases(options, _local_tracks(nfo_path.parent), current_id, home=home)
          best = ranked[0] if ranked else None
          if best and best.release_id != current_id:
+            where = home if best.released_in(home) else best.country
             if overwrite or not current_id:
                if current_id:
-                  print(info(f"{label}  switching to the {best.country} edition {best.release_id} "
+                  print(info(f"{label}  switching to the {where} edition {best.release_id} "
                              f"({best.track_count} tracks; was {current_id})"))
                release = fetch_mb_release(best.release_id)
             else:
-               print(info(f"{label}  the {best.country} edition {best.release_id} ({best.track_count} tracks) "
+               print(info(f"{label}  the {where} edition {best.release_id} ({best.track_count} tracks) "
                           "fits better; add --replace to switch to it"))
          if not release:
             fail += 1

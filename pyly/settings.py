@@ -8,11 +8,45 @@ and provides API keys from [keys] section, environment, or per-source key files.
 from __future__ import annotations
 
 import configparser
+import locale
 import os
+import re
+import sys
 from pathlib import Path
 from typing import Any
 
 from .options import FLAGS, FLAG_BY_NAME, RunOptions, DEFAULT_LYRIC_SOURCES
+
+
+# ---------------------------------------------------------------------------
+# Home country (default for --country-code)
+# ---------------------------------------------------------------------------
+
+def detect_country() -> str:
+   """
+   This computer's two-letter region code ("US"), or "" when it can't be told.
+
+   Windows: the region set in Settings > Time & language (GetUserDefaultGeoName).
+   Elsewhere: the country part of the locale, e.g. "en_GB.UTF-8" -> "GB".
+   """
+   if sys.platform == "win32":
+      try:
+         import ctypes
+         buf = ctypes.create_unicode_buffer(16)
+         if ctypes.windll.kernel32.GetUserDefaultGeoName(buf, len(buf)) and re.fullmatch(r"[A-Za-z]{2}", buf.value):
+            return buf.value.upper()
+      except (AttributeError, OSError):
+         pass   # older Windows: fall through to the locale
+   names = [os.environ.get(v, "") for v in ("LC_ALL", "LC_CTYPE", "LANG")]
+   try:
+      names.append(locale.getlocale()[0] or "")
+   except ValueError:
+      pass
+   for name in names:
+      m = re.search(r"[_-]([A-Za-z]{2})(?![A-Za-z])", name)
+      if m:
+         return m.group(1).upper()
+   return ""
 
 
 # ---------------------------------------------------------------------------

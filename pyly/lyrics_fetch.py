@@ -664,7 +664,7 @@ class MBReleaseMatch:
 
 
 def search_mb_release(artist: str, album: str, track_count: int | None = None,
-                      log_fn=None, artist_id: str = "") -> MBReleaseMatch | None:
+                      log_fn=None, artist_id: str = "", home: str = "") -> MBReleaseMatch | None:
    """
    Search MusicBrainz for the release that best fits an artist, album title and
    (optionally) number of tracks. Returns None when nothing fits well enough.
@@ -716,7 +716,8 @@ def search_mb_release(artist: str, album: str, track_count: int | None = None,
                + (0.5 if official else -1.0 if status in ("withdrawn", "bootleg") else 0.0)
                + (rel.get("score") or 0) / 100
                + (0.05 if rel.get("date") else 0.0)
-               + (0.1 if "XW" in _release_countries(rel) else 0.0))
+               + (0.1 if "XW" in _release_countries(rel) else 0.0)
+               + (0.15 if home and home.upper() in _release_countries(rel) else 0.0))
       scores.append(score)
       if score > best_score:
          exact = title_sim == 1.0 and official and (track_count is None or same_count)
@@ -764,6 +765,7 @@ class MBReleaseOption:
    date: str
    status: str
    track_titles: tuple[str, ...]
+   countries: tuple[str, ...] = ()   # every country code it came out in
 
    @property
    def track_count(self) -> int:
@@ -772,6 +774,10 @@ class MBReleaseOption:
    @property
    def worldwide(self) -> bool:
       return self.country == "XW"
+
+   def released_in(self, code: str) -> bool:
+      """True when this edition came out in that country (two-letter code)."""
+      return bool(code) and (code == self.country or code in self.countries)
 
 
 def _release_countries(rel: dict) -> list[str]:
@@ -809,27 +815,30 @@ def list_group_releases(rg_mbid: str, log_fn=None) -> list[MBReleaseOption]:
       options.append(MBReleaseOption(
          release_id=rel["id"], country=country, country_count=len(codes),
          date=str(rel.get("date") or ""), status=str(rel.get("status") or ""), track_titles=titles,
+         countries=tuple(codes),
       ))
    return options
 
 
 def rank_releases(options: list[MBReleaseOption], local_tracks: dict[int, str],
-                  current_id: str = "") -> list[MBReleaseOption]:
+                  current_id: str = "", home: str = "") -> list[MBReleaseOption]:
    """
    Order an album's editions best first:
      1. fits the local files (each "NN Title" file matches that release's track NN),
         and has at least as many tracks as the highest local track number;
-     2. the worldwide (XW) release;
-     3. official releases;
-     4. not a one-country edition outside the US;
-     5. the edition album.nfo already names;
-     6. released in the most countries, then a US release;
-     7. earliest date.
-   So the worldwide release wins unless another edition fits the files better.
-   Step 4 keeps a local edition (e.g. Japanese, with its own artist spelling
-   and bonus tracks) from winning a tie by list order, and from staying
-   picked just because album.nfo already names it.
+     2. released in the home country (--country-code, default this computer's region);
+     3. the worldwide (XW) release;
+     4. official releases;
+     5. not a one-country edition from somewhere else;
+     6. the edition album.nfo already names;
+     7. released in the most countries;
+     8. earliest date.
+   So the home-country edition wins unless another edition fits the files better.
+   Step 5 keeps a foreign local edition (e.g. Japanese, with its own artist
+   spelling and bonus tracks) from winning a tie by list order, and from
+   staying picked just because album.nfo already names it.
    """
+   home = (home or "US").upper()
    highest = max(local_tracks, default=0)
 
    def fit(opt: MBReleaseOption) -> int:
@@ -839,12 +848,12 @@ def rank_releases(options: list[MBReleaseOption], local_tracks: dict[int, str],
    return sorted(options, key=lambda o: (
       o.track_count < highest,
       -fit(o),
+      not o.released_in(home),
       not o.worldwide,
       o.status.lower() != "official",
-      o.country_count < 2 and o.country not in ("US", "XW"),
+      o.country_count < 2 and not o.worldwide,
       o.release_id != current_id,
       -o.country_count,
-      o.country != "US",
       o.date or "9999",
    ))
 

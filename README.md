@@ -338,10 +338,15 @@ To avoid hammering MusicBrainz, PyLy checks the file **locally first** and only 
 **Choosing the right edition.** Most albums come out in several editions (releases): different countries, formats, or extra tracks. PyLy looks at all of them and picks, in this order:
 
 1. the edition whose track numbers match your files (for example, your `06 My Song.mp3` is track 6 on that edition);
-2. the worldwide edition (`XW` on MusicBrainz);
-3. an official release;
-4. the edition `album.nfo` already names;
-5. the earliest one.
+2. an edition released in your country (`--country-code`; left out, PyLy reads this computer's region);
+3. the worldwide edition (`XW` on MusicBrainz);
+4. an official release;
+5. not an edition released in only one other country (a Japanese edition, say, which may spell the artist in Japanese);
+6. the edition `album.nfo` already names;
+7. the one released in the most countries;
+8. the earliest one.
+
+If an edition credits the artist in another script while the artist's own name is in Latin letters, `album.nfo` gets the artist's own name.
 
 The other editions are saved in `album.nfo` as `<relatedrelease>` entries (id, country, date, status and number of tracks), best first, so you can switch to one later by copying its id into `<musicbrainzalbumid>`. PyLy only replaces the id `album.nfo` already has when you add `--replace`; without it, PyLy tells you when another edition fits better.
 
@@ -633,6 +638,7 @@ Flags are grouped by purpose. The **Letter** column shows the short form (if any
 | `--whisper-python` | (none) | the Python that has Whisper installed. Default: the path in `PYLY_WHISPER_PYTHON`, then the Python running PyLy. | (none) |
 | `--color` | (none) | colored output: `auto` (on in a terminal), `on` or `off`. | `auto` |
 | `--mismatch-file` | (none) | FAFO's list of songs that look wrong (`mismatches.jsonl`). `--check-tags` shows its notes beside the tag problems. Read only: PyLy never changes anything because of it. | (none) |
+| `--country-code` | (none) | Two-letter country code (`US`, `GB`, `JP`). `--get-info` picks the edition released there first. | this computer's region (`US` if unknown) |
 
 ### Advanced: fine-tuning the lyrics matching (no letters)
 

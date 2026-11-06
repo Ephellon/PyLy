@@ -358,5 +358,22 @@ class TestCurrentSettingsCache(unittest.TestCase):
          self.assertIs(current_settings(), s2)
 
 
+class TestDetectCountry(unittest.TestCase):
+   """--country-code default: the computer's region."""
+
+   def test_reads_country_from_locale(self):
+      from pyly import settings
+      with patch.object(settings.sys, "platform", "linux"), \
+           patch.dict(os.environ, {"LC_ALL": "", "LC_CTYPE": "", "LANG": "en_GB.UTF-8"}):
+         self.assertEqual(settings.detect_country(), "GB")
+
+   def test_unknown_gives_empty(self):
+      from pyly import settings
+      with patch.object(settings.sys, "platform", "linux"), \
+           patch.dict(os.environ, {"LC_ALL": "", "LC_CTYPE": "", "LANG": "C"}), \
+           patch.object(settings.locale, "getlocale", return_value=(None, None)):
+         self.assertEqual(settings.detect_country(), "")
+
+
 if __name__ == "__main__":
    unittest.main()

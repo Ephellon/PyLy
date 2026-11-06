@@ -155,6 +155,9 @@ FLAGS: tuple[Flag, ...] = (
    Flag("mismatch-file", None, "setting", group="settings", value="text", metavar="FILE",
         help="FAFO's mismatches.jsonl; --check-tags shows its flags beside tag problems. "
              "Read only, never acted on."),
+   Flag("country-code", None, "setting", group="settings", value="text", metavar="XX",
+        help="two-letter country (US, GB, JP); --get-info picks the edition released there first. "
+             "Default: this computer's region."),
 
    # -- Fine-tuning for matching reference lyrics (rarely used, no letters) ---
    Flag("match-score", None, "setting", group="tuning", value="float", default=0.82, metavar="0-1",
@@ -232,6 +235,7 @@ class RunOptions:
    whisper_python: str | None = None
    color: str = "auto"
    mismatch_file: str | None = None
+   country_code: str | None = None
 
    # tuning
    match_score: float = 0.82
