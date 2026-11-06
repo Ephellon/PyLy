@@ -183,6 +183,27 @@ class TestEditions(unittest.TestCase):
                                           {11: "k"})
       self.assertEqual(ranked[0].release_id, "us")
 
+   def test_local_edition_loses_tie_to_wider_release(self):
+      # Nothing fits the files and nothing is worldwide: more countries, then US, win.
+      jp = _option("jp", "JP", ["a"] * 16)
+      gb = _option("gb", "GB", ["a"] * 16)
+      us = lyrics_fetch.MBReleaseOption(release_id="us", country="US", country_count=2,
+                                        date="2019-12-15", status="Official", track_titles=("a",) * 16)
+      ranked = lyrics_fetch.rank_releases([jp, gb, us], {14: "z"})
+      self.assertEqual(ranked[0].release_id, "us")
+      # Even when album.nfo already names the Japanese edition.
+      ranked = lyrics_fetch.rank_releases([jp, gb, us], {14: "z"}, current_id="jp")
+      self.assertEqual(ranked[0].release_id, "us")
+
+   def test_credit_in_other_script_uses_artist_name(self):
+      credit = [{"name": "ビリー・アイリッシュ", "joinphrase": " feat. ",
+                 "artist": {"name": "Billie Eilish"}},
+                {"name": "Beyoncé", "artist": {"name": "Beyoncé"}}]
+      self.assertEqual(lyrics_fetch._mb_join_credit(credit), "Billie Eilish feat. Beyoncé")
+      # An artist whose own name is Japanese keeps it.
+      self.assertEqual(lyrics_fetch._mb_join_credit([{"name": "宇多田ヒカル", "artist": {"name": "宇多田ヒカル"}}]),
+                       "宇多田ヒカル")
+
    def test_year_is_first_release_not_this_edition(self):
       release = lyrics_fetch._parse_mb_release({
          "id": "xw", "date": "2023-01-25", "release-group": {"id": "g", "first-release-date": "2019-12-15"},

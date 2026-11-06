@@ -70,7 +70,7 @@ python -m unittest discover -s tests -t .
   - `lyricradar`, `genius`, `musixmatch` need `--allow-scraping` (`--apsss`); `musixmatch` also needs `[keys] musixmatch`.
 - Tags/cover:
   - `--get-info` (-e): fill `album.nfo` from MusicBrainz; `--replace` overwrites; never creates one.
-  - Edition pick (`rank_releases`): local "NN Title" fit > XW (read all `release-events`, not `country`) > official > current id > earliest. Others -> `<relatedrelease>` blocks after tracks. Id switches only with `--replace`. Year = release group's first-release-date. Album-level nfo reads skip `<track>`/`<relatedrelease>` (`_album_level`).
+  - Edition pick (`rank_releases`): local "NN Title" fit > XW (read all `release-events`, not `country`) > official > not one-country non-US (e.g. JP) > current id > most countries > US > earliest. Credit in non-Latin script with Latin artist name -> artist name (`_mb_join_credit`). Others -> `<relatedrelease>` blocks after tracks. Id switches only with `--replace`. Year = release group's first-release-date. Album-level nfo reads skip `<track>`/`<relatedrelease>` (`_album_level`).
   - `--fix-tags` (-f), `--check-tags [strict|loose]` (-c, default strict). Fix compares loose, or in the `--check-tags` mode when both given.
   - `--mismatch-file FILE`: FAFO feed (JSON Lines; `file` or `folder`, `checked`, optional `size`/`mtime`, `mismatches[{code}]`). `--check-tags` prints `[FAFO]` lines; album flags once per folder. Never writes, never changes exit code. Last record per path wins; record skipped when file changed after check. FAFO data never writes tags/nfo/lrc (ruling, share `fafo-pyly-flagging`).
   - `--use-cover` (-s): folder image only. `--get-cover [SOURCE[=KEY]]` (-v): download (default `musicbrainz`), fall back to folder image.

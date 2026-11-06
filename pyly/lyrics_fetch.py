@@ -6,6 +6,7 @@ import os
 import re
 import tempfile
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -615,6 +616,11 @@ class MBRelease:
    tracks: list[MBTrack]
 
 
+def _is_latin(text: str) -> bool:
+   """True when every letter in text is a Latin letter (accents allowed)."""
+   return all(not c.isalpha() or "LATIN" in unicodedata.name(c, "") for c in text)
+
+
 def _mb_join_credit(credit) -> str:
    """Render an artist-credit list into a display string (handles feat./joins)."""
    if not isinstance(credit, list):
@@ -623,7 +629,14 @@ def _mb_join_credit(credit) -> str:
    for entry in credit:
       if not isinstance(entry, dict):
          continue
-      name = entry.get("name") or (entry.get("artist") or {}).get("name") or ""
+      credited = entry.get("name") or ""
+      canonical = (entry.get("artist") or {}).get("name") or ""
+      # A local edition may credit the artist in its own script (a Japanese
+      # release credits Billie Eilish as "ビリー・アイリッシュ"). Keep the
+      # artist's own name then, so every album files under one artist.
+      if credited and canonical and _is_latin(canonical) and not _is_latin(credited):
+         credited = canonical
+      name = credited or canonical
       join = entry.get("joinphrase") or ""
       if name:
          parts.append(f"{name}{join}")
@@ -808,9 +821,14 @@ def rank_releases(options: list[MBReleaseOption], local_tracks: dict[int, str],
         and has at least as many tracks as the highest local track number;
      2. the worldwide (XW) release;
      3. official releases;
-     4. the edition album.nfo already names;
-     5. earliest date.
+     4. not a one-country edition outside the US;
+     5. the edition album.nfo already names;
+     6. released in the most countries, then a US release;
+     7. earliest date.
    So the worldwide release wins unless another edition fits the files better.
+   Step 4 keeps a local edition (e.g. Japanese, with its own artist spelling
+   and bonus tracks) from winning a tie by list order, and from staying
+   picked just because album.nfo already names it.
    """
    highest = max(local_tracks, default=0)
 
@@ -823,7 +841,10 @@ def rank_releases(options: list[MBReleaseOption], local_tracks: dict[int, str],
       -fit(o),
       not o.worldwide,
       o.status.lower() != "official",
+      o.country_count < 2 and o.country not in ("US", "XW"),
       o.release_id != current_id,
+      -o.country_count,
+      o.country != "US",
       o.date or "9999",
    ))
 
