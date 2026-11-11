@@ -140,6 +140,7 @@ def actual_metadata(tags: dict[str, str]) -> dict[str, str]:
 class NfoTrack:
    position: int | None
    title: str
+   disc: int | None = None   # only in album.nfo written from a multi-disc edition
 
 
 @dataclass(frozen=True)
@@ -157,22 +158,25 @@ class AlbumNfo:
    year: str = ""
    tracks: list[NfoTrack] = field(default_factory=list)
 
-   def track_for(self, position: int | None, title_hint: str = "") -> NfoTrack | None:
+   def track_for(self, position: int | None, title_hint: str = "", disc: int | None = None) -> NfoTrack | None:
       """
       Resolve the album.nfo track entry for a file.
 
-      Match by position first. When a position repeats — multi-disc albums
-      reuse 1..N on each disc, so e.g. position 16 exists on both discs — there
-      are several candidates, and the one whose title is closest to the file's
-      (the title hint) is chosen by edit distance instead of blindly taking
-      disc 1. When no position matches, fall back to the closest title across
-      the whole list.
+      Match by position first (and by disc, when album.nfo lists discs). When
+      a position repeats — multi-disc albums reuse 1..N on each disc — the one
+      whose title is closest to the file's (the title hint) wins instead of
+      blindly taking disc 1. A position match whose title has nothing in common
+      with the file's is not trusted: "01 Reckless Life (CD 02)" must not take
+      disc 1's "Welcome to the Jungle" from a one-disc album.nfo. Then fall
+      back to the closest title across the whole list, else no entry at all.
       """
       same_pos = [t for t in self.tracks if position is not None and t.position == position]
-      if len(same_pos) == 1:
-         return same_pos[0]
-      if len(same_pos) > 1:
-         return _best_title_match(same_pos, title_hint) if title_hint else same_pos[0]
+      if disc is not None and any(t.disc is not None for t in same_pos):
+         same_pos = [t for t in same_pos if (t.disc or 1) == disc]
+      if same_pos:
+         best = _best_title_match(same_pos, title_hint) if title_hint and len(same_pos) > 1 else same_pos[0]
+         if not title_hint or _titles_agree(title_hint, best.title):
+            return best
       if title_hint:
          return _best_title_match(self.tracks, title_hint, min_similarity=0.6)
       return None
@@ -253,7 +257,8 @@ def parse_album_nfo(nfo_path: Path) -> AlbumNfo | None:
       pos_raw = _nfo_first("position", block) or _nfo_first("track", block)
       title = _nfo_first("title", block)
       if title or pos_raw:
-         tracks.append(NfoTrack(position=_safe_int(pos_raw), title=title))
+         tracks.append(NfoTrack(position=_safe_int(pos_raw), title=title,
+                                disc=_safe_int(_nfo_first("disc", block))))
 
    album_level = _album_level(text)
 
@@ -427,6 +432,8 @@ def _drop_blocks(tag: str, text: str) -> str:
 def _track_xml(track, indent: str) -> str:
    pad = indent + indent
    lines = [f"{indent}<track>"]
+   if getattr(track, "disc", None):
+      lines.append(f"{pad}<disc>{track.disc}</disc>")
    if track.position is not None:
       lines.append(f"{pad}<position>{track.position}</position>")
    lines.append(f"{pad}<title>{_xml_escape(track.title)}</title>")
@@ -555,7 +562,7 @@ def expected_metadata(
    still wins over this folder inference.
    """
    guess = infer_path_guess(audio_path, layout)
-   nfo_track = album_nfo.track_for(guess.track_number, guess.title) if album_nfo else None
+   nfo_track = album_nfo.track_for(guess.track_number, guess.title, guess.disc_number) if album_nfo else None
 
    album_dir, artist_dir = _structure_dirs(audio_path, album_nfo, artist_nfo)
    struct_album = album_dir.name if album_dir else ""
@@ -937,6 +944,22 @@ def _fuzzy_text_eq(a: str, b: str) -> bool:
    if len(na) < 5 or len(nb) < 5:
       return False
    return _similarity(na, nb) >= _FUZZY_THRESHOLD
+
+
+def _titles_agree(file_title: str, nfo_title: str) -> bool:
+   """
+   Could these be the same song? Bracketed extras ("(live)", "[Remastered]")
+   and " - 2011 Remaster" tails are ignored; then the titles must be close or
+   one must contain the other.
+   """
+   def core(s: str) -> str:
+      s = re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", " ", s or "")
+      s = re.sub(r"\s+-\s+.*$", "", s)
+      return _norm_loose(s)
+   a, b = core(file_title), core(nfo_title)
+   if not a or not b:
+      return True
+   return a in b or b in a or _similarity(a, b) >= 0.6
 
 
 def _best_title_match(tracks, title_hint: str, min_similarity: float = 0.0):

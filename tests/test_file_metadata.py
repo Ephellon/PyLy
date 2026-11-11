@@ -36,6 +36,30 @@ def _related():
                            status="Official", track_titles=("Song 1", "Song 2", "Song 3"))]
 
 
+class TestTrackFor(unittest.TestCase):
+   """Matching a file to its album.nfo track on multi-disc albums."""
+
+   def nfo(self, *tracks):
+      from pyly.file_metadata import AlbumNfo, NfoTrack
+      return AlbumNfo(path=Path("album.nfo"), tracks=[NfoTrack(*t) for t in tracks])
+
+   def test_other_disc_song_not_given_disc_one_title(self):
+      nfo = self.nfo((1, "Welcome to the Jungle"), (2, "It’s So Easy"))
+      self.assertIsNone(nfo.track_for(1, "Reckless Life (live)", disc=2))
+      # Same song, extra words in brackets: still that track.
+      self.assertEqual(nfo.track_for(1, "Welcome to the Jungle (1986 Sound City session)", disc=3).title,
+                       "Welcome to the Jungle")
+
+   def test_disc_picks_track_when_nfo_lists_discs(self):
+      nfo = self.nfo((1, "Welcome to the Jungle", 1), (1, "Reckless Life (live)", 2))
+      self.assertEqual(nfo.track_for(1, "Reckless Life (live)", disc=2).disc, 2)
+
+   def test_cd_suffix_is_the_disc(self):
+      from pyly.template_tokens import infer_path_guess
+      g = infer_path_guess(Path("R:/Local/Queen/A Night at the Opera/11 Bohemian Rhapsody (CD 02).mp3"), None)
+      self.assertEqual((g.track_number, g.disc_number, g.title), (11, 2, "Bohemian Rhapsody"))
+
+
 class TestRelatedReleases(unittest.TestCase):
    def setUp(self):
       self.tmp = tempfile.TemporaryDirectory()

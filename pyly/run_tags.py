@@ -20,6 +20,7 @@ from pathlib import Path
 
 from pyly.options import RunOptions
 from pyly.settings import detect_country
+from pyly.template_tokens import split_disc_suffix
 from pyly.inputs import collect_audio_files
 from pyly.file_metadata import (
    read_embedded_tags,
@@ -76,13 +77,17 @@ def _album_track_count(folder: Path, nfo) -> int | None:
    return max([len(files), *numbers]) or None
 
 
-def _local_tracks(folder: Path) -> dict[int, str]:
-   """Track number -> title from the audio filenames ("06 My Song.mp3" -> {6: "My Song"})."""
-   tracks: dict[int, str] = {}
+def _local_tracks(folder: Path) -> dict[tuple[int, int], str]:
+   """
+   (disc, track) -> title from the audio filenames: "06 My Song.mp3" ->
+   {(1, 6): "My Song"}, "01 Nightrain (CD 02).mp3" -> {(2, 1): "Nightrain"}.
+   """
+   tracks: dict[tuple[int, int], str] = {}
    for f in collect_audio_files([folder], recursive=False):
       m = re.match(r"(\d{1,3})[\s._-]+(.+)", f.stem)
       if m:
-         tracks[int(m.group(1))] = m.group(2)
+         title, disc = split_disc_suffix(m.group(2))
+         tracks[(disc or 1, int(m.group(1)))] = title
    return tracks
 
 

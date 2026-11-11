@@ -601,6 +601,7 @@ class MBTrack:
    length_ms: int | None
    recording_id: str
    artist_credit: str
+   disc: int | None = None   # set only when the release has more than one disc
 
 
 @dataclass(frozen=True)
@@ -766,6 +767,7 @@ class MBReleaseOption:
    status: str
    track_titles: tuple[str, ...]
    countries: tuple[str, ...] = ()   # every country code it came out in
+   disc_sizes: tuple[int, ...] = ()  # tracks on each disc, in order
 
    @property
    def track_count(self) -> int:
@@ -797,16 +799,30 @@ def _release_countries(rel: dict) -> list[str]:
 
 
 def list_group_releases(rg_mbid: str, log_fn=None) -> list[MBReleaseOption]:
-   """Every release in a release group, with its countries and track titles (one request)."""
-   params = urllib.parse.urlencode({"release-group": rg_mbid, "inc": "recordings+media",
-                                    "fmt": "json", "limit": "100"})
-   try:
-      data = _mb_get(f"https://musicbrainz.org/ws/2/release?{params}")
-   except Exception as exc:
-      _log_warn(f"MB GROUP: listing releases failed ({rg_mbid}): {exc}", log_fn=log_fn)
-      return []
+   """
+   Every release in a release group, with its countries and track titles.
+   MusicBrainz returns fewer releases per page when they carry many tracks
+   (41 of Appetite for Destruction's 74 came back at once, without the 4-CD
+   super deluxe), so keep asking from where the last page ended.
+   """
+   releases: list = []
+   while True:
+      params = urllib.parse.urlencode({"release-group": rg_mbid, "inc": "recordings+media",
+                                       "fmt": "json", "limit": "100", "offset": str(len(releases))})
+      try:
+         data = _mb_get(f"https://musicbrainz.org/ws/2/release?{params}")
+      except Exception as exc:
+         _log_warn(f"MB GROUP: listing releases failed ({rg_mbid}): {exc}", log_fn=log_fn)
+         if not releases:
+            return []
+         break   # keep the pages already read
+      page = (data or {}).get("releases") or []
+      releases.extend(page)
+      total = (data or {}).get("release-count")
+      if not page or not isinstance(total, int) or len(releases) >= total:
+         break
    options: list[MBReleaseOption] = []
-   for rel in (data or {}).get("releases") or []:
+   for rel in releases:
       if not isinstance(rel, dict) or not rel.get("id"):
          continue
       codes = _release_countries(rel)
@@ -816,6 +832,7 @@ def list_group_releases(rg_mbid: str, log_fn=None) -> list[MBReleaseOption]:
          release_id=rel["id"], country=country, country_count=len(codes),
          date=str(rel.get("date") or ""), status=str(rel.get("status") or ""), track_titles=titles,
          countries=tuple(codes),
+         disc_sizes=tuple(len(m.get("tracks") or []) for m in rel.get("media") or []),
       ))
    return options
 
@@ -839,14 +856,30 @@ def rank_releases(options: list[MBReleaseOption], local_tracks: dict[int, str],
    staying picked just because album.nfo already names it.
    """
    home = (home or "US").upper()
-   highest = max(local_tracks, default=0)
+   # Keys are track numbers, or (disc, track) for "NN Title (CD DD)" files.
+   local = {(k if isinstance(k, tuple) else (1, k)): title for k, title in local_tracks.items()}
+
+   def slot(opt: MBReleaseOption, disc: int, n: int) -> int | None:
+      """Where disc/track sits in the edition's flat track list (0-based), or None if it has no such track."""
+      if not opt.disc_sizes:
+         return n - 1 if disc == 1 and n <= opt.track_count else None
+      if disc > len(opt.disc_sizes) or n > opt.disc_sizes[disc - 1]:
+         return None
+      return sum(opt.disc_sizes[:disc - 1]) + n - 1
+
+   def too_short(opt: MBReleaseOption) -> bool:
+      return any(slot(opt, d, n) is None for d, n in local)
 
    def fit(opt: MBReleaseOption) -> int:
-      return sum(1 for n, title in local_tracks.items()
-                 if n <= opt.track_count and _mxm_sim(title, opt.track_titles[n - 1]) >= 0.8)
+      hits = 0
+      for (d, n), title in local.items():
+         i = slot(opt, d, n)
+         if i is not None and i < opt.track_count and _mxm_sim(title, opt.track_titles[i]) >= 0.8:
+            hits += 1
+      return hits
 
    return sorted(options, key=lambda o: (
-      o.track_count < highest,
+      too_short(o),
       -fit(o),
       not o.released_in(home),
       not o.worldwide,
@@ -873,7 +906,8 @@ def _parse_mb_release(data: dict) -> MBRelease:
          break
 
    tracks: list[MBTrack] = []
-   for medium in data.get("media") or []:
+   media = data.get("media") or []
+   for disc_no, medium in enumerate(media, start=1):
       for t in (medium or {}).get("tracks") or []:
          if not isinstance(t, dict):
             continue
@@ -894,6 +928,7 @@ def _parse_mb_release(data: dict) -> MBRelease:
             length_ms=length,
             recording_id=str(rec.get("id") or ""),
             artist_credit=_mb_join_credit(rec.get("artist-credit")),
+            disc=disc_no if len(media) > 1 else None,
          ))
 
    return MBRelease(

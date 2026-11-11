@@ -178,12 +178,29 @@ def _extract_media_info(data: dict) -> MediaInfo:
    )
 
 
+# Multi-disc files are named "NN Title (CD DD)": the suffix is the disc, not
+# part of the song title.
+_DISC_SUFFIX_RX = re.compile(r"\s*\((?:CD|Disc)\s*(\d{1,2})\)\s*$", re.IGNORECASE)
+
+
+def split_disc_suffix(title: str) -> tuple[str, int | None]:
+   """'Nightrain (CD 01)' -> ('Nightrain', 1); a title without the suffix comes back as is."""
+   m = _DISC_SUFFIX_RX.search(title or "")
+   if not m:
+      return title, None
+   return title[:m.start()].rstrip(), int(m.group(1))
+
+
 def infer_path_guess(audio_path: Path, layout: str | None) -> PathGuess:
    layout_raw = (layout or "").strip()
    if layout_raw and is_layout_template(layout_raw):
-      return infer_from_layout_template(audio_path, layout_raw)
-   layout_key = layout_raw.lower() or "default"
-   return infer_from_layout_preset(audio_path, layout_key)
+      guess = infer_from_layout_template(audio_path, layout_raw)
+   else:
+      guess = infer_from_layout_preset(audio_path, layout_raw.lower() or "default")
+   title, disc = split_disc_suffix(guess.title)
+   if disc is None:
+      return guess
+   return replace(guess, title=title, disc_number=guess.disc_number or disc)
 
 
 def infer_from_layout_preset(audio_path: Path, layout_key: str) -> PathGuess:

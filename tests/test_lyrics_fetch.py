@@ -150,6 +150,25 @@ def _option(rid, country, titles, status="Official", date="2019-12-15"):
 class TestEditions(unittest.TestCase):
    """Choosing between an album's editions: worldwide first, unless another fits the files better."""
 
+   def test_reads_every_page_of_a_group(self):
+      page1 = {"release-count": 3, "releases": [{"id": "a"}, {"id": "b"}]}
+      page2 = {"release-count": 3, "releases": [{"id": "c", "media": [{"tracks": [{"title": "x"}] * 2}] * 4}]}
+      with patch.object(lyrics_fetch, "_mb_get", side_effect=[page1, page2]) as get:
+         opts = lyrics_fetch.list_group_releases("group")
+      self.assertEqual([o.release_id for o in opts], ["a", "b", "c"])
+      self.assertIn("offset=2", get.call_args_list[1].args[0])
+      self.assertEqual(opts[2].disc_sizes, (2, 2, 2, 2))
+
+   def test_multi_disc_files_pick_multi_disc_edition(self):
+      one = _option("one", "US", ["Welcome to the Jungle", "It's So Easy"])
+      four = lyrics_fetch.MBReleaseOption(
+         release_id="four", country="XW", country_count=1, date="2018-06-29", status="Official",
+         track_titles=("Welcome to the Jungle", "It's So Easy", "Reckless Life", "Nice Boys"),
+         disc_sizes=(2, 2))
+      ranked = lyrics_fetch.rank_releases([one, four], {(1, 1): "Welcome to the Jungle", (2, 1): "Reckless Life"},
+                                          home="US")
+      self.assertEqual(ranked[0].release_id, "four")
+
    def test_lists_every_release_country(self):
       events = [{"area": {"iso-3166-1-codes": [c]}} for c in ("AF", "AL", "US", "GB")]
       data = {"releases": [
