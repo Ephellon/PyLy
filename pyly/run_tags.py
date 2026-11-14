@@ -214,9 +214,11 @@ def run_get_info(opts: RunOptions) -> int:
          best = ranked[0] if ranked else None
          if best and best.release_id != current_id:
             where = home if best.released_in(home) else best.country
+            # Some editions list no release country; say so rather than "the  edition".
+            which = f"the {where} edition" if where else "an edition with no country"
             if overwrite or not current_id:
                if current_id:
-                  print(info(f"{label}  switching to the {where} edition {best.release_id} "
+                  print(info(f"{label}  switching to {which} {best.release_id} "
                              f"({best.track_count} tracks; was {current_id})"))
                release = fetch_mb_release(best.release_id)
             else:
