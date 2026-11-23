@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 960 800" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="run-order-title run-order-desc" id="run-order-root">
+        <title id="run-order-title">How a PyLy run is ordered</title>
+        <desc id="run-order-desc">PyLy selects files, always tidies metadata first, stops there when no lyrics action is given, otherwise gets reference lyrics, skips Whisper when downloaded synced lyrics are used as-is, and ends by writing the .lrc files.</desc>
+        <defs>
+      <style>@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;family=Noto+Serif:ital@0;1&amp;family=Noto+Sans+KR:wght@400;500;600&amp;family=Noto+Serif+KR:wght@400&amp;family=Noto+Sans+TC:wght@400;500;600&amp;family=Noto+Serif+TC:wght@400&amp;display=swap');
+      #run-order-root { --color-paper:   #f5f5f5;
+      --color-ink:     #2d3142;
+      --color-muted:   #4f5d75;
+      --color-accent:  #bf4520;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace; }
+      #run-order-root { font-family: var(--font-sans); color: var(--color-ink); }
+      #run-order-root .diagram-container { width: 100%; overflow-x: auto; }
+      @media print {
+#run-order-root .diagram-container { overflow-x: visible; }
+}</style>
+          <pattern id="run-order-dots" width="22" height="22" patternUnits="userSpaceOnUse">
+            <circle cx="1" cy="1" r="0.9" fill="#2d3142" fill-opacity="0.10"/>
+          </pattern>
+          <marker id="run-order-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="run-order-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bf4520"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+        <rect width="100%" height="100%" fill="url(#run-order-dots)" opacity="0.55"/>
+
+        <!-- Arrows (drawn first, behind nodes) -->
+        <!-- Select -> Metadata -->
+        <line x1="480" y1="84" x2="480" y2="112" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#run-order-arrow)"/>
+        <!-- Metadata -> D1 -->
+        <line x1="480" y1="168" x2="480" y2="196" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#run-order-arrow)"/>
+        <!-- D1 NO -> stop -->
+        <line x1="580" y1="236" x2="680" y2="236" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#run-order-arrow)"/>
+        <!-- D1 YES -> Reference -->
+        <line x1="480" y1="276" x2="480" y2="304" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#run-order-arrow)"/>
+        <!-- Reference -> D2 -->
+        <line x1="480" y1="360" x2="480" y2="388" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#run-order-arrow)"/>
+        <!-- D2 YES -> Write (skips Whisper) -->
+        <path d="M580 428 H752 Q760 428 760 436 V680 Q760 688 752 688 H604" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#run-order-arrow)"/>
+        <!-- D2 NO -> Transcribe -->
+        <line x1="480" y1="468" x2="480" y2="496" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#run-order-arrow)"/>
+        <!-- Transcribe -> Align -->
+        <line x1="480" y1="552" x2="480" y2="580" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#run-order-arrow)"/>
+        <!-- Align -> Write -->
+        <line x1="480" y1="636" x2="480" y2="664" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#run-order-arrow)"/>
+
+        <!-- Arrow labels -->
+        <rect x="618" y="218" width="24" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="630" y="227" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.12em">NO</text>
+
+        <rect x="488" y="284" width="32" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="504" y="293" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.12em">YES</text>
+
+        <rect x="652" y="410" width="32" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="668" y="419" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.12em">YES</text>
+
+        <rect x="488" y="476" width="24" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="500" y="485" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.12em">NO</text>
+
+        <!-- Start oval: select files -->
+        <rect x="360" y="40" width="240" height="44" rx="20" fill="#2d3142" stroke="#2d3142" stroke-width="1" fill-opacity="0.03" stroke-opacity="0.30"/>
+        <text x="480" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Select files</text>
+        <text x="480" y="74" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">&lt;path&gt; · --include-subfolders</text>
+
+        <!-- Tidy metadata (focal: always runs first) -->
+        <rect x="360" y="112" width="240" height="56" rx="6" fill="#bf4520" stroke="#bf4520" stroke-width="1" fill-opacity="0.08"/>
+        <text x="480" y="136" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Tidy metadata</text>
+        <text x="480" y="154" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">get-info → fix-tags → cover → check-tags</text>
+
+        <!-- D1: any lyrics action? -->
+        <polygon points="480,196 580,236 480,276 380,236" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <text x="480" y="234" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Any lyrics</text>
+        <text x="480" y="248" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">action given?</text>
+
+        <!-- End oval: metadata-only run -->
+        <rect x="680" y="212" width="200" height="48" rx="20" fill="#2d3142" stroke="#2d3142" stroke-width="1" fill-opacity="0.03" stroke-opacity="0.30"/>
+        <text x="780" y="234" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Stop after metadata</text>
+        <text x="780" y="248" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">exit = worst stage</text>
+
+        <!-- Reference lyrics -->
+        <rect x="360" y="304" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <text x="480" y="328" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Get reference lyrics</text>
+        <text x="480" y="346" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">--refresh / --get / --use-lyrics</text>
+
+        <!-- D2: synced lyrics used as-is? -->
+        <polygon points="480,388 580,428 480,468 380,428" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <text x="480" y="426" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Synced lyrics</text>
+        <text x="480" y="440" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">used as-is?</text>
+
+        <!-- Transcribe -->
+        <rect x="360" y="496" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <text x="480" y="520" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Transcribe with Whisper</text>
+        <text x="480" y="538" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">.srt → reduce · also with --keep-both</text>
+
+        <!-- Align and patch -->
+        <rect x="360" y="580" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <text x="480" y="604" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Align and patch</text>
+        <text x="480" y="622" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">--trust-lyrics · --drop-extras · rescue</text>
+
+        <!-- End oval: write outputs -->
+        <rect x="360" y="664" width="240" height="48" rx="20" fill="#2d3142" stroke="#2d3142" stroke-width="1" fill-opacity="0.03" stroke-opacity="0.30"/>
+        <text x="480" y="686" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Write .lrc files</text>
+        <text x="480" y="700" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">header · .fetched.lrc · --clean-up</text>
+
+        <!-- Annotation callouts -->
+        <text fill="#4f5d75" font-size="14" font-style="italic" font-family="'Instrument Serif', serif">
+          <tspan x="40" y="56">Settings such as --replace, --preview,</tspan>
+          <tspan x="40" y="74">--layout and --model shape every step;</tspan>
+          <tspan x="40" y="92">they are never steps of their own.</tspan>
+        </text>
+        <text fill="#4f5d75" font-size="14" font-style="italic" font-family="'Instrument Serif', serif">
+          <tspan x="40" y="320">--upgrade-lyrics narrows these steps to</tspan>
+          <tspan x="40" y="338">Whisper-made .lrc files; the metadata</tspan>
+          <tspan x="40" y="356">steps always see every file.</tspan>
+        </text>
+
+        <!-- Legend -->
+        <line x1="40" y1="740" x2="920" y2="740" stroke="#2d3142" stroke-width="0.8" stroke-opacity="0.10"/>
+        <text x="40" y="756" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">LEGEND · SHAPE CARRIES TYPE</text>
+
+        <rect x="40" y="772" width="24" height="12" rx="6" fill="#2d3142" stroke="#2d3142" stroke-width="1" fill-opacity="0.03" stroke-opacity="0.30"/>
+        <text x="72" y="782" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Start / end</text>
+
+        <rect x="200" y="772" width="24" height="12" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <text x="232" y="782" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Step</text>
+
+        <polygon points="340,778 352,772 364,778 352,784" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <text x="376" y="782" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Decision</text>
+
+        <rect x="480" y="772" width="24" height="12" rx="2" fill="#bf4520" stroke="#bf4520" stroke-width="1" fill-opacity="0.08"/>
+        <text x="512" y="782" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Always runs first</text>
+      </svg>

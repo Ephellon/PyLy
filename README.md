@@ -543,17 +543,9 @@ R:\Local\Queen\A Night at the Opera\
     11 Bohemian Rhapsody.mp3           (5:55)
 ```
 
-```mermaid
-flowchart TD
-    S["Step 0 · Settings — apply throughout<br/>--include-subfolders · --replace · --preview · --write-log · --skip-backup · --skip-header · --allow-scraping · --color · model · device · whisper-python · layout · language · profile · tuning knobs"] -.-> A
-    A["1 · Select files<br/>&lt;path&gt; · --include-subfolders (feeds every stage)"] --> B
-    B["2 · Tidy metadata<br/>--get-info → --fix-tags → --get-cover/--use-cover → --check-tags"] --> C
-    C["3 · Get reference lyrics<br/>--upgrade-lyrics filter · --refresh-lyrics · --get-lyrics sources · --use-lyrics · --keep-both · --trust-lyrics · --drop-extras"] --> D
-    D["4 · Transcribe<br/>Whisper → .srt → reduced (skipped if --keep-both has synced)"] --> E
-    E["5 · Align and patch<br/>--trust-lyrics · --drop-extras · match-score · match-window · merge-limit · rescue-score · --skip-rescue"] --> F
-    F["6 · Write outputs<br/>.lrc + header (unless --skip-header) · .fetched.lrc sidecar (--keep-both)"] --> G
-    G["7 · Clean up<br/>--clean-up delete intermediate .srt files"]
-```
+![How a PyLy run is ordered: select files, tidy metadata, stop if no lyrics action, otherwise get reference lyrics, skip Whisper when synced lyrics are used as-is, transcribe, align, write .lrc files](docs/run-order.svg)
+
+(Full-size page: [docs/run-order.html](docs/run-order.html).)
 
 **Step 0 — Settings.** Everything that configures *how* the run behaves rather than performing a step: traversal (`--include-subfolders`), write policy (`--replace` — which for `--get-cover` also means "ask the provider and replace existing art"), simulate (`--preview`), logging (`--write-log`), backup policy (`--skip-backup`), header inclusion (`--skip-header`), scraping allowance (`--allow-scraping`), color output (`--color`), Whisper choices (`--model`, `--device`, `--whisper-python`), folder-layout hint (`--layout`), language expectation (`--language`), profile selection (`--profile`), and the alignment-tuning knobs (`--match-score`, `--match-window`, `--merge-limit`, `--rescue-score`, `--skip-rescue`).
 
