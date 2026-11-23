@@ -141,6 +141,7 @@ class NfoTrack:
    position: int | None
    title: str
    disc: int | None = None   # only in album.nfo written from a multi-disc edition
+   recording_id: str = ""    # <musicbrainztrackid>: the MusicBrainz recording (checked by --fingerprints)
 
 
 @dataclass(frozen=True)
@@ -258,7 +259,8 @@ def parse_album_nfo(nfo_path: Path) -> AlbumNfo | None:
       title = _nfo_first("title", block)
       if title or pos_raw:
          tracks.append(NfoTrack(position=_safe_int(pos_raw), title=title,
-                                disc=_safe_int(_nfo_first("disc", block))))
+                                disc=_safe_int(_nfo_first("disc", block)),
+                                recording_id=_nfo_first("musicbrainztrackid", block)))
 
    album_level = _album_level(text)
 
@@ -562,7 +564,7 @@ def expected_metadata(
    still wins over this folder inference.
    """
    guess = infer_path_guess(audio_path, layout)
-   nfo_track = album_nfo.track_for(guess.track_number, guess.title, guess.disc_number) if album_nfo else None
+   nfo_track = nfo_track_for(audio_path, layout, album_nfo)
 
    album_dir, artist_dir = _structure_dirs(audio_path, album_nfo, artist_nfo)
    struct_album = album_dir.name if album_dir else ""
@@ -609,6 +611,14 @@ def expected_metadata(
       "year": year or "",
       "track": str(track_num) if track_num is not None else "",
    }
+
+
+def nfo_track_for(audio_path: Path, layout: str | None, album_nfo: AlbumNfo | None) -> NfoTrack | None:
+   """The album.nfo track entry for a file (by disc, number and title), or None when it isn't listed."""
+   if not album_nfo:
+      return None
+   guess = infer_path_guess(audio_path, layout)
+   return album_nfo.track_for(guess.track_number, guess.title, guess.disc_number)
 
 
 def layout_metadata(audio_path: Path, layout: str | None) -> dict[str, str]:

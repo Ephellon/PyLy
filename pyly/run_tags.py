@@ -19,7 +19,7 @@ import urllib.parse
 from pathlib import Path
 
 from pyly.options import RunOptions
-from pyly.settings import detect_country
+from pyly.settings import detect_country, get_key
 from pyly.template_tokens import split_disc_suffix
 from pyly.inputs import collect_audio_files
 from pyly.file_metadata import (
@@ -36,6 +36,7 @@ from pyly.file_metadata import (
    parse_album_nfo,
    read_nfo_artist_mbid,
    has_problems,
+   nfo_track_for,
    write_tags,
    _read_text,
 )
@@ -56,7 +57,7 @@ from pyly.lyrics_fetch import (
    rank_releases,
    search_mb_release,
 )
-from pyly.mismatch_feed import MismatchFeed, album_flags, load_mismatch_feed, track_flags
+from pyly.acoustid import AcoustIDError, Identifier, fix_title, sound_flags
 from pyly.console_ui import banner, ok, err, warn, info
 
 
@@ -288,6 +289,7 @@ def run_fix_tags(opts: RunOptions) -> int:
    dry_run = opts.preview
 
    banner(f"PyLy --fix-tags ({write_mode}) [{strictness}] — {len(inputs)} file(s)")
+   ears = _identifier(opts)
 
    clean_count = 0
    problem_count = 0
@@ -300,6 +302,13 @@ def run_fix_tags(opts: RunOptions) -> int:
          artist_nfo = find_artist_nfo(audio)
          tags = read_embedded_tags(audio)
          expected = expected_metadata(audio, layout, album_nfo, artist_nfo)
+         # album.nfo is the truth; only a file it doesn't list may take its
+         # title from what AcoustID is sure the file sounds like.
+         if ears and not nfo_track_for(audio, layout, album_nfo):
+            heard = fix_title(_identify(ears, audio))
+            if heard and heard != expected["title"]:
+               print(info(f"{audio.name}  sounds like {heard!r} (AcoustID)"))
+               expected["title"] = heard
          actual = actual_metadata(tags)
          layout_exp = layout_metadata(audio, layout)
          diffs = compare_metadata(expected, actual, layout_exp, mode=strictness)
@@ -337,6 +346,8 @@ def run_fix_tags(opts: RunOptions) -> int:
          fail_count += 1
          print(err(f"{audio.name}: {e}"))
 
+   if ears:
+      ears.save()
    verb = "WOULD FIX" if dry_run else "FIXED"
    banner(
       f"{clean_count} - OK / {problem_count} - MISMATCH / "
@@ -372,37 +383,32 @@ def run_check_tags(opts: RunOptions) -> int:
    layout = opts.layout
 
    banner(f"PyLy --check-tags [{strictness}] — {len(inputs)} file(s)")
-   feed = _load_feed(opts)
+   ears = _identifier(opts)
 
    clean_count = 0
    problem_count = 0
    fail_count = 0
    flagged_count = 0
-   flagged_folders: set[Path] = set()
 
    for audio in inputs:
-      # FAFO flags are shown but never counted as tag problems: they don't
-      # change the exit code, so a nightly run isn't marked failed by them.
-      if feed is not None:
-         if audio.parent not in flagged_folders:
-            flagged_folders.add(audio.parent)
-            lines = album_flags(feed, audio.parent)
-            if lines:
-               print(warn(f"{audio.parent.name}  [FAFO album]"))
-               for line in lines:
-                  print(info(f"  {line}"))
-         lines = track_flags(feed, audio)
-         if lines:
-            flagged_count += 1
-            print(warn(f"{audio.name}  [FAFO]"))
-            for line in lines:
-               print(info(f"  {line}"))
-
       try:
          album_nfo = find_album_nfo(audio)
          artist_nfo = find_artist_nfo(audio)
          tags = read_embedded_tags(audio)
          expected = expected_metadata(audio, layout, album_nfo, artist_nfo)
+
+         # Sound flags are shown but never counted as tag problems: they don't
+         # change the exit code, so a nightly run isn't marked failed by them.
+         if ears:
+            entry = nfo_track_for(audio, layout, album_nfo)
+            lines = sound_flags(_identify(ears, audio) or [], expected["title"],
+                                entry.recording_id if entry else "")
+            if lines:
+               flagged_count += 1
+               print(warn(f"{audio.name}  [AcoustID]"))
+               for line in lines:
+                  print(info(f"  {line}"))
+
          actual = actual_metadata(tags)
          layout_exp = layout_metadata(audio, layout)
          diffs = compare_metadata(expected, actual, layout_exp, mode=strictness)
@@ -430,27 +436,35 @@ def run_check_tags(opts: RunOptions) -> int:
          fail_count += 1
          print(err(f"{audio.name}: {e}"))
 
-   flagged_note = f" / {flagged_count} - FAFO" if feed is not None else ""
+   if ears:
+      ears.save()
+   flagged_note = f" / {flagged_count} - SOUND" if ears else ""
    banner(f"{clean_count} - OK / {problem_count} - MISMATCH / {fail_count} - FAIL{flagged_note}")
 
    # Non-zero exit when any mismatch or failure
    return 0 if (problem_count == 0 and fail_count == 0) else 1
 
 
-def _load_feed(opts: RunOptions) -> MismatchFeed | None:
+def _identifier(opts: RunOptions) -> Identifier | None:
    """
-   Read --mismatch-file when it's set. A missing or unreadable file gives one
-   warning and the check carries on without FAFO flags.
+   The AcoustID identifier for --fingerprints, or None when it's off. A
+   missing key or fpcalc gives one warning; cached answers are still used.
    """
-   if not opts.mismatch_file:
+   if not opts.fingerprints:
       return None
+   ears = Identifier(get_key("acoustid"))
+   if ears.problem:
+      print(warn(f"--fingerprints: {ears.problem}; only cached answers are used"))
+   return ears
+
+
+def _identify(ears: Identifier, audio: Path):
+   """What one file sounds like; a lookup failure is a warning, not a failed file."""
    try:
-      feed = load_mismatch_feed(opts.mismatch_file)
-   except OSError as e:
-      print(warn(f"FAFO mismatch file not read ({opts.mismatch_file}): {e.strerror or e}"))
+      return ears.identify(audio)
+   except (AcoustIDError, OSError) as e:
+      print(warn(f"{audio.name}  AcoustID: {e}"))
       return None
-   print(info(f"FAFO: {len(feed)} flagged item(s) in {opts.mismatch_file}"))
-   return feed
 
 
 # ---------------------------------------------------------------------------

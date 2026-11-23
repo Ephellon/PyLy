@@ -266,13 +266,19 @@ pyly "R:\Local\Queen\A Night at the Opera" --check-tags loose
 
 `loose` is handy when your `.nfo` files carry MusicBrainz medium/edition suffixes you don't keep in your tags.
 
-**Notes from FAFO.** [FAFO](https://github.com/Ephellon/FfAFO) is a separate program that compares each song with a streaming service and MusicBrainz and lists the ones that look wrong: the wrong recording, a different length, a withdrawn release, and so on. Point `--mismatch-file` at its list and `--check-tags` prints those notes too, marked `[FAFO]`:
+**Checking by sound.** Tags and filenames can both say *Bohemian Rhapsody* while the file holds a different song. With `--fingerprints`, PyLy listens to each file with [Chromaprint](https://acoustid.org/chromaprint)'s `fpcalc` and asks [AcoustID](https://acoustid.org/webservice) which recording it is:
 
+This command checks the album's tags and also checks that each file sounds like the song it should be:
 ```
-pyly "R:\Local\Queen\A Night at the Opera" --check-tags --mismatch-file "R:\FAFO\mismatches.jsonl"
+pyly "R:\Local\Queen\A Night at the Opera" --check-tags --fingerprints
 ```
+You will see the usual tag report, plus a `[AcoustID]` note for any file that sounds like another song, e.g. `SOUND: sounds like 'I'm in Love With My Car' by Queen (97% sure), not 'Bohemian Rhapsody'`.
 
-The notes are only shown. They don't change your files and don't make the check fail. A note is skipped when the song changed after FAFO looked at it.
+- When `album.nfo` lists the song's MusicBrainz recording id (`<musicbrainztrackid>`, written by `--get-info`), the check is exact; otherwise the titles are compared.
+- The notes don't make the check fail. Songs AcoustID doesn't know are skipped quietly.
+- With `--fix-tags`, a song that `album.nfo` doesn't list takes its title from AcoustID when the match is at least 90% sure. Songs `album.nfo` lists always keep its title.
+- Setup, once: put `fpcalc.exe` (from the Chromaprint download page) in PyLy's `ff\` folder or on your PATH, and get a free application key at [acoustid.org](https://acoustid.org/new-application). Save the key under `[keys]` as `acoustid = ...` in `~/.pyly/pyly.ini` (or in `$PYLY_ACOUSTID_KEY`, or in `~/.pyly/acoustid-key`). Never put it on the command line.
+- Answers are saved in `~/.pyly/acoustid-cache.json`, so later runs only ask about new or changed files.
 
 ### Advanced: how tags are compared
 
@@ -616,6 +622,7 @@ Flags are grouped by purpose. The **Letter** column shows the short form (if any
 | `--skip-backup` | `-b` | don't keep a `.bak` copy before rewriting tags or embedding art | `false` |
 | `--skip-header` | (none) | leave the tag lines out of the `.lrc` header | `false` |
 | `--allow-scraping` | (none) | allow sources that read websites instead of a public API (`lyricradar`, `genius`, `musixmatch`) | `false` |
+| `--fingerprints` | (none) | identify each song by its sound (Chromaprint `fpcalc` + AcoustID, needs `[keys] acoustid`): `--check-tags` notes files that sound like another song; `--fix-tags` takes a sure match's title for songs `album.nfo` doesn't list | `false` |
 | `--list-sources` | (none) | print the lyric and cover sources, then stop | `false` |
 
 ### Settings (nouns)
@@ -629,7 +636,6 @@ Flags are grouped by purpose. The **Letter** column shows the short form (if any
 | `--device` | `-d` | where Whisper runs: `cuda` (Nvidia graphics card) or `cpu`. Whisper decides when it's not set. | (none) |
 | `--whisper-python` | (none) | the Python that has Whisper installed. Default: the path in `PYLY_WHISPER_PYTHON`, then the Python running PyLy. | (none) |
 | `--color` | (none) | colored output: `auto` (on in a terminal), `on` or `off`. | `auto` |
-| `--mismatch-file` | (none) | FAFO's list of songs that look wrong (`mismatches.jsonl`). `--check-tags` shows its notes beside the tag problems. Read only: PyLy never changes anything because of it. | (none) |
 | `--country-code` | (none) | Two-letter country code (`US`, `GB`, `JP`). `--get-info` picks the edition released there first. | this computer's region (`US` if unknown) |
 
 ### Advanced: fine-tuning the lyrics matching (no letters)

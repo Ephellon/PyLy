@@ -131,6 +131,10 @@ FLAGS: tuple[Flag, ...] = (
    Flag("allow-scraping", None, "switch", group="run", aliases=("apsss",),
         help="allow sources that read websites instead of a public API "
              "(lyricradar, genius, musixmatch)."),
+   Flag("fingerprints", None, "switch", group="run",
+        help="identify each song by its sound (Chromaprint fpcalc + AcoustID, needs [keys] acoustid): "
+             "--check-tags flags files that sound like a different song; --fix-tags takes the title "
+             "of a sure match for files album.nfo doesn't list."),
    Flag("list-sources", None, "action", group="run",
         help="print the lyric and cover sources, then stop."),
 
@@ -152,9 +156,6 @@ FLAGS: tuple[Flag, ...] = (
              "Python running PyLy."),
    Flag("color", None, "setting", group="settings", value=("auto", "on", "off"), default="auto",
         metavar="WHEN", help="colored output. Default: auto (on in a terminal)."),
-   Flag("mismatch-file", None, "setting", group="settings", value="text", metavar="FILE",
-        help="FAFO's mismatches.jsonl; --check-tags shows its flags beside tag problems. "
-             "Read only, never acted on."),
    Flag("country-code", None, "setting", group="settings", value="text", metavar="XX",
         help="two-letter country (US, GB, JP); --get-info picks the edition released there first. "
              "Default: this computer's region."),
@@ -224,6 +225,7 @@ class RunOptions:
    skip_backup: bool = False
    skip_header: bool = False
    allow_scraping: bool = False
+   fingerprints: bool = False
    list_sources: bool = False
 
    # settings
@@ -234,7 +236,6 @@ class RunOptions:
    device: str | None = None
    whisper_python: str | None = None
    color: str = "auto"
-   mismatch_file: str | None = None
    country_code: str | None = None
 
    # tuning

@@ -20,7 +20,7 @@ Offline-first Python CLI for a music library. Writes `.lrc` lyrics (downloaded s
 | `pyly/cover_art.py` | Cover sources, `ArtResolver(prefer="local"/"online")`, ffmpeg embedding. |
 | `pyly/file_metadata.py` | Tag and `.nfo` read/write, comparison, fuzzy matching. |
 | `pyly/template_tokens.py` | Path/layout guessing (`Artist/Album/Track` default). |
-| `pyly/mismatch_feed.py` | Read FAFO `mismatches.jsonl` (`--mismatch-file`); flag lines for `--check-tags`. |
+| `pyly/acoustid.py` | `--fingerprints`: `fpcalc` fingerprint, AcoustID lookup (POST, key in body, 3 req/s), per-file cache, sound flags. |
 | `pyly/inputs.py` | Collect audio / `.lrc` files from paths. |
 | `pyly/whisper_offline.py` | Whisper subprocess; `--whisper-python` selects interpreter. |
 | `tests/` | stdlib `unittest` suite. |
@@ -72,11 +72,11 @@ python -m unittest discover -s tests -t .
   - `--get-info` (-e): fill `album.nfo` from MusicBrainz; `--replace` overwrites; never creates one.
   - Edition pick (`rank_releases`): local "NN Title" fit > home country (`--country-code`, default `settings.detect_country()`, else US) > XW (read all `release-events`, not `country`) > official > not one-country elsewhere (e.g. JP) > current id > most countries > earliest. Multi-disc: "NN Title (CD DD)" = disc DD (`split_disc_suffix`); fit is per (disc, track) via `disc_sizes`; group listing pages by `offset` (MB caps pages with many tracks). nfo `<track><disc>` written for multi-disc editions; `track_for` filters by disc and rejects a position match whose title disagrees (`_titles_agree`), so a disc-2 song never takes a disc-1 title. Credit in non-Latin script with Latin artist name -> artist name (`_mb_join_credit`). Others -> `<relatedrelease>` blocks after tracks. Id switches only with `--replace`. Year = release group's first-release-date. Album-level nfo reads skip `<track>`/`<relatedrelease>` (`_album_level`).
   - `--fix-tags` (-f), `--check-tags [strict|loose]` (-c, default strict). Fix compares loose, or in the `--check-tags` mode when both given.
-  - `--mismatch-file FILE`: FAFO feed (JSON Lines; `file` or `folder`, `checked`, optional `size`/`mtime`, `mismatches[{code}]`). `--check-tags` prints `[FAFO]` lines; album flags once per folder. Never writes, never changes exit code. Last record per path wins; record skipped when file changed after check. FAFO data never writes tags/nfo/lrc (ruling, share `fafo-pyly-flagging`).
+  - `--fingerprints` (switch, no letter): `fpcalc` (PATH, else `ff/fpcalc.exe`) + AcoustID (`[keys] acoustid`). `--check-tags` prints `[AcoustID]` SOUND lines (exact by nfo `<musicbrainztrackid>`, else title compare); never changes exit code. `--fix-tags` takes a >=0.9 match's title only for files album.nfo doesn't list (`nfo_track_for` None). Cache `~/.pyly/acoustid-cache.json` keyed by path+size+mtime; never stores the key. No key/fpcalc -> one warning, cache-only. Replaced FAFO's `--mismatch-file`.
   - `--use-cover` (-s): folder image only. `--get-cover [SOURCE[=KEY]]` (-v): download (default `musicbrainz`), fall back to folder image.
   - Embedded art skipped unless `--replace`. Audio writes keep `.bak` unless `--skip-backup` (-b).
-- Run control: `--include-subfolders` (-i), `--replace` (-r), `--preview` (-p), `--clean-up` (-n), `--write-log` (-w), `--skip-header`, `--list-sources`.
-- Settings: `--profile`, `--language` (-l), `--layout` (-a), `--model` (-o, default `medium`), `--device` (-d), `--whisper-python`, `--color`, `--mismatch-file`, `--country-code`. Tuning (no letters): `--match-score`, `--match-window`, `--merge-limit`, `--rescue-score`, `--skip-rescue`.
+- Run control: `--include-subfolders` (-i), `--replace` (-r), `--preview` (-p), `--clean-up` (-n), `--write-log` (-w), `--skip-header`, `--fingerprints`, `--list-sources`.
+- Settings: `--profile`, `--language` (-l), `--layout` (-a), `--model` (-o, default `medium`), `--device` (-d), `--whisper-python`, `--color`, `--country-code`. Tuning (no letters): `--match-score`, `--match-window`, `--merge-limit`, `--rescue-score`, `--skip-rescue`.
 - Settings file: priority CLI > `[profile]` > `[defaults]` > built-in. Keys = flag names (`get-lyrics = musicbrainz,musixmatch`). Switches: yes/no/true/false/on/off/1/0. Value-or-switch: `yes` = default value, `no` = off. Key lookup: `[keys]` entry > `PYLY_<SOURCE>_KEY` > `~/.pyly/<source>-key`.
 
 ## Git
